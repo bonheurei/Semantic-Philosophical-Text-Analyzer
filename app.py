@@ -268,6 +268,12 @@ UI_EN = {
     "analyze_button": "Analyze Text",
     "warning_empty": "Paste a passage before running the analysis.",
     "spinner": "Translating and mapping emotional tone…",
+    "status_detect": "Detecting source language…",
+    "status_translate": "Translating to English for the model…",
+    "status_model": "Loading Go Emotions model (first run can take 1–2 minutes on the server)…",
+    "status_score": "Scoring emotional tone…",
+    "status_emotions_done": "Emotion analysis complete",
+    "spinner_insight": "Generating philosophical insight (Gemini)…",
     "error_prefix": "Analysis could not be completed:",
     "emotion": "Emotion",
     "intensity": "Intensity",
@@ -829,11 +835,14 @@ if analiz_et:
         st.warning(UI_EN["warning_empty"])
     else:
         try:
-            with st.spinner(UI_EN["spinner"]):
+            with st.status(UI_EN["spinner"], expanded=True) as status:
+                status.write(UI_EN["status_detect"])
                 source_lang = detect_source_lang(metin.strip())
+                status.write(UI_EN["status_translate"])
                 metin_en = metni_ingilizceye_cevir(metin.strip(), source_lang)
-
+                status.write(UI_EN["status_model"])
                 classifier = load_emotion_classifier()
+                status.write(UI_EN["status_score"])
                 skorlar = classifier(
                     metin_en,
                     truncation=True,
@@ -841,38 +850,10 @@ if analiz_et:
                 )[0]
                 ust_uc = ust_uc_duzenle(skorlar)
                 baskın = emotion_display(ust_uc[0]["label"], source_lang)
-
-                insight_metni = ""
-                try:
-                    insight_en = gemini_philosophical_insight(metin.strip())
-                    insight_metni = insight_in_source_language(insight_en, source_lang)
-                except GeminiConnectionTimeout:
-                    st.error(
-                        "Bağlantı zaman aşımına uğradı (504). "
-                        "Daha kısa bir metin deneyin veya biraz sonra tekrar Analyze Text’e basın."
-                    )
-                except GeminiServiceUnavailable:
-                    st.warning(
-                        "Gemini şu an çok yoğun (503). Bu geçicidir; "
-                        "birkaç dakika sonra tekrar Analyze Text’e basın."
-                    )
-                except Exception as e:
-                    if _gemini_deadline(e):
-                        st.error(
-                            "Bağlantı zaman aşımına uğradı (504). "
-                            "Daha kısa bir metin deneyin veya biraz sonra tekrar Analyze Text’e basın."
-                        )
-                    elif _gemini_retryable(e):
-                        st.warning(
-                            "Gemini şu an çok yoğun (503). Bu geçicidir; "
-                            "birkaç dakika sonra tekrar Analyze Text’e basın."
-                        )
-                    else:
-                        st.error(f"Hata Detayı: {e}")
-
-            with st.expander("Semantic & Philosophical Insight", expanded=True):
-                if insight_metni:
-                    st.markdown(insight_metni)
+                status.update(
+                    label=UI_EN["status_emotions_done"],
+                    state="complete",
+                )
 
             tablo = duygu_tablosu_html(ust_uc, source_lang)
             cevirildi = not source_lang.startswith("en")
@@ -897,6 +878,49 @@ if analiz_et:
                 """,
                 unsafe_allow_html=True,
             )
+
+            insight_metni = ""
+            with st.spinner(UI_EN["spinner_insight"]):
+                try:
+                    if "GEMINI_API_KEY" not in st.secrets:
+                        raise RuntimeError(
+                            "GEMINI_API_KEY is missing. Add it under "
+                            "Streamlit Cloud → Settings → Secrets (or "
+                            ".streamlit/secrets.toml locally)."
+                        )
+                    insight_en = gemini_philosophical_insight(metin.strip())
+                    insight_metni = insight_in_source_language(
+                        insight_en, source_lang
+                    )
+                except GeminiConnectionTimeout:
+                    st.error(
+                        "Bağlantı zaman aşımına uğradı (504). "
+                        "Daha kısa bir metin deneyin veya biraz sonra tekrar "
+                        "Analyze Text’e basın."
+                    )
+                except GeminiServiceUnavailable:
+                    st.warning(
+                        "Gemini şu an çok yoğun (503). Bu geçicidir; "
+                        "birkaç dakika sonra tekrar Analyze Text’e basın."
+                    )
+                except Exception as e:
+                    if _gemini_deadline(e):
+                        st.error(
+                            "Bağlantı zaman aşımına uğradı (504). "
+                            "Daha kısa bir metin deneyin veya biraz sonra "
+                            "tekrar Analyze Text’e basın."
+                        )
+                    elif _gemini_retryable(e):
+                        st.warning(
+                            "Gemini şu an çok yoğun (503). Bu geçicidir; "
+                            "birkaç dakika sonra tekrar Analyze Text’e basın."
+                        )
+                    else:
+                        st.error(f"Hata Detayı: {e}")
+
+            with st.expander("Semantic & Philosophical Insight", expanded=True):
+                if insight_metni:
+                    st.markdown(insight_metni)
         except Exception as exc:
             st.error(f'{UI_EN["error_prefix"]} {exc}')
 
