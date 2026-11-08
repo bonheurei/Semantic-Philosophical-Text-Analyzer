@@ -1,6 +1,5 @@
 import os
 
-import google.generativeai as genai
 import streamlit as st
 import requests
 from langdetect import LangDetectException, detect
@@ -29,6 +28,10 @@ ISO_MYMEMORY_TERCIH = {
 }
 
 MODEL_ID = "SamLowe/roberta-base-go_emotions"
+GEMINI_API_URL = (
+    "https://generativelanguage.googleapis.com/v1beta/models/"
+    "gemini-1.5-flash:generateContent"
+)
 GEMINI_INSIGHT_PROMPT = (
     "Provide a brief, 2-sentence philosophical and semantic analysis of this text, "
     "focusing on its underlying tone, subtext, or metaphorical meaning."
@@ -330,13 +333,29 @@ def gemini_api_key() -> str:
 
 
 def gemini_philosophical_insight(metin: str) -> str:
-    genai.configure(api_key=gemini_api_key())
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    api_key = gemini_api_key()
     prompt = f"{GEMINI_INSIGHT_PROMPT}\n\nText:\n{metin.strip()}"
-    response = model.generate_content(prompt)
-    if not response or not getattr(response, "text", None):
-        raise RuntimeError("Gemini returned an empty response.")
-    return response.text.strip()
+    url = f"{GEMINI_API_URL}?key={api_key}"
+    yanit = requests.post(
+        url,
+        json={
+            "contents": [
+                {
+                    "parts": [{"text": prompt}],
+                }
+            ]
+        },
+        timeout=60,
+    )
+    if yanit.status_code != 200:
+        raise RuntimeError(
+            f"Gemini API error ({yanit.status_code}): {yanit.text[:500]}"
+        )
+    data = yanit.json()
+    try:
+        return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+    except (KeyError, IndexError, TypeError) as exc:
+        raise RuntimeError(f"Unexpected Gemini JSON shape: {data}") from exc
 
 
 def insight_in_source_language(insight_en: str, source_lang: str) -> str:
