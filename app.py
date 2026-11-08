@@ -29,7 +29,7 @@ ISO_MYMEMORY_TERCIH = {
 }
 
 MODEL_ID = "SamLowe/roberta-base-go_emotions"
-GEMINI_MODEL = "gemini-pro"
+GEMINI_MODEL = "gemini-1.5-flash"
 GEMINI_INSIGHT_PROMPT = (
     "Provide a brief, 2-sentence philosophical and semantic analysis of this text, "
     "focusing on its underlying tone, subtext, or metaphorical meaning."
