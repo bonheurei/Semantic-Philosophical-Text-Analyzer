@@ -29,7 +29,6 @@ ISO_MYMEMORY_TERCIH = {
 }
 
 MODEL_ID = "SamLowe/roberta-base-go_emotions"
-GEMINI_MODEL = "gemini-1.5-flash-latest"
 GEMINI_INSIGHT_PROMPT = (
     "Provide a brief, 2-sentence philosophical and semantic analysis of this text, "
     "focusing on its underlying tone, subtext, or metaphorical meaning."
@@ -332,7 +331,7 @@ def gemini_api_key() -> str:
 
 def gemini_philosophical_insight(metin: str) -> str:
     genai.configure(api_key=gemini_api_key())
-    model = genai.GenerativeModel(GEMINI_MODEL)
+    model = genai.GenerativeModel("gemini-1.5-flash")
     prompt = f"{GEMINI_INSIGHT_PROMPT}\n\nText:\n{metin.strip()}"
     response = model.generate_content(prompt)
     if not response or not getattr(response, "text", None):
