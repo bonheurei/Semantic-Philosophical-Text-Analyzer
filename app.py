@@ -321,7 +321,7 @@ def load_emotion_classifier():
 
 def gemini_philosophical_insight(metin: str) -> str:
     genai.configure(api_key=st.secrets['GEMINI_API_KEY'])
-    model = genai.GenerativeModel('gemini-2.5-flash')
+    model = genai.GenerativeModel('gemini-3.8-flash')
     prompt = f"{GEMINI_INSIGHT_PROMPT}\n\nText:\n{metin.strip()}"
     yanit = model.generate_content(prompt)
     if not yanit.text:
