@@ -31,10 +31,6 @@ ISO_MYMEMORY_TERCIH = {
 }
 
 MODEL_ID = "SamLowe/roberta-base-go_emotions"
-GEMINI_INSIGHT_PROMPT = (
-    "Provide a brief, 2-sentence philosophical and semantic analysis of this text, "
-    "focusing on its underlying tone, subtext, or metaphorical meaning."
-)
 
 EMOTION_LABELS_EN = {
     "admiration": "Admiration",
@@ -332,21 +328,14 @@ def gemini_api_key() -> str:
         ) from exc
 
 
-def gemini_philosophical_insight(metin: str) -> str:
+def generate_content_model_names() -> list[str]:
     genai.configure(api_key=gemini_api_key())
-    model = genai.GenerativeModel('gemini-1.5-flash')
-    prompt = f"{GEMINI_INSIGHT_PROMPT}\n\nText:\n{metin.strip()}"
-    yanit = model.generate_content(prompt)
-    if not yanit.text:
-        raise RuntimeError("Gemini returned empty insight text.")
-    return yanit.text.strip()
-
-
-def insight_in_source_language(insight_en: str, source_lang: str) -> str:
-    source_lang = (source_lang or "en").lower()
-    if source_lang.startswith("en"):
-        return insight_en
-    return guvenli_cevir(insight_en, GOOGLE_EN, source_lang)
+    names: list[str] = []
+    for model in genai.list_models():
+        methods = model.supported_generation_methods or []
+        if "generateContent" in methods:
+            names.append(model.name)
+    return names
 
 
 def metni_ingilizceye_cevir(metin: str, source_lang: str) -> str:
@@ -685,16 +674,15 @@ if analiz_et:
                 ust_uc = ust_uc_duzenle(skorlar)
                 baskın = emotion_display(ust_uc[0]["label"], source_lang)
 
-                insight_metni = ""
+                generate_content_models: list[str] = []
                 try:
-                    insight_en = gemini_philosophical_insight(metin.strip())
-                    insight_metni = insight_in_source_language(insight_en, source_lang)
+                    generate_content_models = generate_content_model_names()
                 except Exception as e:
                     st.error(f"Hata Detayı: {e}")
 
             with st.expander(UI_EN["insight_title"], expanded=True):
-                if insight_metni:
-                    st.markdown(insight_metni)
+                if generate_content_models:
+                    st.info("\n".join(generate_content_models))
 
             tablo = duygu_tablosu_html(ust_uc, source_lang)
             cevirildi = not source_lang.startswith("en")
