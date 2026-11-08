@@ -29,8 +29,8 @@ ISO_MYMEMORY_TERCIH = {
 
 MODEL_ID = "SamLowe/roberta-base-go_emotions"
 GEMINI_API_URL = (
-    "https://generativelanguage.googleapis.com/v1beta/models/"
-    "gemini-1.5-flash:generateContent"
+    "https://generativelanguage.googleapis.com/v1/models/"
+    "gemini-pro:generateContent"
 )
 GEMINI_INSIGHT_PROMPT = (
     "Provide a brief, 2-sentence philosophical and semantic analysis of this text, "
