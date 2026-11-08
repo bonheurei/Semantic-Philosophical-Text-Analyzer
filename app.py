@@ -29,7 +29,7 @@ ISO_MYMEMORY_TERCIH = {
 }
 
 MODEL_ID = "SamLowe/roberta-base-go_emotions"
-GEMINI_MODEL = "gemini-1.5-flash"
+GEMINI_MODEL = "gemini-1.5-flash-latest"
 GEMINI_INSIGHT_PROMPT = (
     "Provide a brief, 2-sentence philosophical and semantic analysis of this text, "
     "focusing on its underlying tone, subtext, or metaphorical meaning."
@@ -683,21 +683,16 @@ if analiz_et:
                 ust_uc = ust_uc_duzenle(skorlar)
                 baskın = emotion_display(ust_uc[0]["label"], source_lang)
 
+                insight_metni = ""
                 try:
                     insight_en = gemini_philosophical_insight(metin.strip())
                     insight_metni = insight_in_source_language(insight_en, source_lang)
-                except Exception:
-                    insight_metni = UI_EN["insight_unavailable"]
-                    if not source_lang.startswith("en"):
-                        try:
-                            insight_metni = guvenli_cevir(
-                                UI_EN["insight_unavailable"], GOOGLE_EN, source_lang
-                            )
-                        except Exception:
-                            insight_metni = UI_EN["insight_unavailable"]
+                except Exception as e:
+                    st.error(f"Hata Detayı: {e}")
 
             with st.expander(UI_EN["insight_title"], expanded=True):
-                st.markdown(insight_metni)
+                if insight_metni:
+                    st.markdown(insight_metni)
 
             tablo = duygu_tablosu_html(ust_uc, source_lang)
             cevirildi = not source_lang.startswith("en")
