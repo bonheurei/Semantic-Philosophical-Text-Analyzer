@@ -45,6 +45,11 @@ GEMINI_INSIGHT_MODEL_PREFERENCES = (
     "gemini-3.8-flash",
 )
 GEMINI_CLIENT_API_VERSIONS = ("v1beta", "v1", None)
+GEMINI_CLOUD_MODELS = ("gemini-2.0-flash-lite", "gemini-2.0-flash")
+GEMINI_CLOUD_API_VERSIONS = ("v1beta",)
+GEMINI_CLOUD_REQUEST_TIMEOUT_SEC = 40
+GEMINI_CLOUD_TOTAL_TIMEOUT_SEC = 50
+GEMINI_CLOUD_MAX_TEXT_CHARS = 1200
 
 
 class GeminiConnectionTimeout(Exception):
@@ -88,9 +93,37 @@ def _gemini_model_not_found(exc: Exception) -> bool:
     return "404" in msg or "not_found" in msg or "is not found" in msg
 
 
-def _gemini_insight_clients():
-    for api_version in GEMINI_CLIENT_API_VERSIONS:
-        opts: dict = {"timeout": GEMINI_INSIGHT_REQUEST_TIMEOUT_SEC * 1000}
+def _is_streamlit_cloud() -> bool:
+    try:
+        url = (st.context.url or "").lower()
+        return "streamlit.app" in url or "streamlit.cloud" in url
+    except Exception:
+        return False
+
+
+def _gemini_insight_profile() -> dict:
+    if _is_streamlit_cloud():
+        return {
+            "request_timeout_sec": GEMINI_CLOUD_REQUEST_TIMEOUT_SEC,
+            "total_timeout_sec": GEMINI_CLOUD_TOTAL_TIMEOUT_SEC,
+            "max_text_chars": GEMINI_CLOUD_MAX_TEXT_CHARS,
+            "api_versions": GEMINI_CLOUD_API_VERSIONS,
+            "model_preferences": GEMINI_CLOUD_MODELS,
+            "discover_models": False,
+        }
+    return {
+        "request_timeout_sec": GEMINI_INSIGHT_REQUEST_TIMEOUT_SEC,
+        "total_timeout_sec": GEMINI_INSIGHT_TOTAL_TIMEOUT_SEC,
+        "max_text_chars": GEMINI_INSIGHT_MAX_TEXT_CHARS,
+        "api_versions": GEMINI_CLIENT_API_VERSIONS,
+        "model_preferences": GEMINI_INSIGHT_MODEL_PREFERENCES,
+        "discover_models": True,
+    }
+
+
+def _gemini_insight_clients(profile: dict):
+    for api_version in profile["api_versions"]:
+        opts: dict = {"timeout": profile["request_timeout_sec"] * 1000}
         if api_version:
             opts["api_version"] = api_version
         yield genai.Client(api_key=st.secrets["GEMINI_API_KEY"], http_options=opts)
@@ -114,7 +147,11 @@ def _gemini_model_id_variants(model: object) -> list[str]:
     return variants
 
 
-def _gemini_insight_model_ids(client) -> list[str]:
+def _gemini_insight_model_ids(client, profile: dict) -> list[str]:
+    if not profile["discover_models"]:
+        return list(profile["model_preferences"])
+
+    preferences = profile["model_preferences"]
     discovered: list[str] = []
     try:
         for model in client.models.list():
@@ -144,14 +181,14 @@ def _gemini_insight_model_ids(client) -> list[str]:
 
     if discovered:
         ordered: list[str] = []
-        for preferred in GEMINI_INSIGHT_MODEL_PREFERENCES:
+        for preferred in preferences:
             if preferred in discovered and preferred not in ordered:
                 ordered.append(preferred)
         for model_id in discovered:
             if model_id not in ordered:
                 ordered.append(model_id)
         return ordered
-    return list(GEMINI_INSIGHT_MODEL_PREFERENCES)
+    return list(preferences)
 
 
 EMOTION_LABELS_EN = {
@@ -447,14 +484,15 @@ def gemini_philosophical_insight(metin: str) -> str:
     temiz = metin.strip()
     if not temiz:
         return ""
-    metin_ozet = temiz[:GEMINI_INSIGHT_MAX_TEXT_CHARS]
+    profile = _gemini_insight_profile()
+    metin_ozet = temiz[: profile["max_text_chars"]]
     prompt = f"{GEMINI_INSIGHT_PROMPT}\n\nText:\n{metin_ozet}"
 
     def _generate() -> str:
         last_exc: Exception | None = None
         saw_not_found = False
-        for client in _gemini_insight_clients():
-            model_ids = _gemini_insight_model_ids(client)
+        for client in _gemini_insight_clients(profile):
+            model_ids = _gemini_insight_model_ids(client, profile)
             for model_id in model_ids:
                 try:
                     yanit = client.models.generate_content(
@@ -499,7 +537,7 @@ def gemini_philosophical_insight(metin: str) -> str:
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             return pool.submit(_generate).result(
-                timeout=GEMINI_INSIGHT_TOTAL_TIMEOUT_SEC
+                timeout=profile["total_timeout_sec"]
             )
     except concurrent.futures.TimeoutError as exc:
         raise GeminiConnectionTimeout from exc
@@ -895,7 +933,8 @@ if analiz_et:
                 except GeminiConnectionTimeout:
                     st.error(
                         "Bağlantı zaman aşımına uğradı (504). "
-                        "Daha kısa bir metin deneyin veya biraz sonra tekrar "
+                        "Duygu analizi tamam; felsefi özet gelmedi. "
+                        "Daha kısa metin deneyin veya biraz sonra tekrar "
                         "Analyze Text’e basın."
                     )
                 except GeminiServiceUnavailable:
