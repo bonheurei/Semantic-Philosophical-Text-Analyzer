@@ -45,10 +45,15 @@ GEMINI_INSIGHT_MODEL_PREFERENCES = (
     "gemini-3.8-flash",
 )
 GEMINI_CLIENT_API_VERSIONS = ("v1beta", "v1", None)
-GEMINI_CLOUD_MODELS = ("gemini-2.0-flash-lite", "gemini-2.0-flash")
-GEMINI_CLOUD_API_VERSIONS = ("v1beta",)
-GEMINI_CLOUD_REQUEST_TIMEOUT_SEC = 40
-GEMINI_CLOUD_TOTAL_TIMEOUT_SEC = 50
+GEMINI_CLOUD_MODELS = (
+    "gemini-3.8-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-001",
+)
+GEMINI_CLOUD_API_VERSIONS = ("v1beta", "v1")
+GEMINI_CLOUD_REQUEST_TIMEOUT_SEC = 45
+GEMINI_CLOUD_TOTAL_TIMEOUT_SEC = 75
 GEMINI_CLOUD_MAX_TEXT_CHARS = 1200
 
 
@@ -101,6 +106,11 @@ def _is_streamlit_cloud() -> bool:
         return False
 
 
+def _gemini_api_key() -> str:
+    raw = st.secrets["GEMINI_API_KEY"]
+    return str(raw).strip().strip('"').strip("'")
+
+
 def _gemini_insight_profile() -> dict:
     if _is_streamlit_cloud():
         return {
@@ -109,7 +119,7 @@ def _gemini_insight_profile() -> dict:
             "max_text_chars": GEMINI_CLOUD_MAX_TEXT_CHARS,
             "api_versions": GEMINI_CLOUD_API_VERSIONS,
             "model_preferences": GEMINI_CLOUD_MODELS,
-            "discover_models": False,
+            "discover_models": True,
         }
     return {
         "request_timeout_sec": GEMINI_INSIGHT_REQUEST_TIMEOUT_SEC,
@@ -126,7 +136,7 @@ def _gemini_insight_clients(profile: dict):
         opts: dict = {"timeout": profile["request_timeout_sec"] * 1000}
         if api_version:
             opts["api_version"] = api_version
-        yield genai.Client(api_key=st.secrets["GEMINI_API_KEY"], http_options=opts)
+        yield genai.Client(api_key=_gemini_api_key(), http_options=opts)
 
 
 def _model_supports_generate_content(model: object) -> bool:
@@ -525,8 +535,11 @@ def gemini_philosophical_insight(metin: str) -> str:
             raise GeminiConnectionTimeout from last_exc
         if saw_not_found and last_exc:
             raise RuntimeError(
-                "Bu API anahtarı için generateContent destekleyen "
-                "uygun bir Gemini modeli bulunamadı."
+                "Bu API anahtarı için generateContent destekleyen uygun bir "
+                "Gemini modeli bulunamadı (404). Streamlit Cloud → Secrets "
+                "içindeki GEMINI_API_KEY değerinin, localhost’taki "
+                "secrets.toml ile birebir aynı AQ… veya AIza… anahtarı "
+                "olduğundan emin ol (boşluk/tırnak yok)."
             ) from last_exc
         if last_exc and _gemini_retryable(last_exc):
             raise GeminiServiceUnavailable from last_exc
