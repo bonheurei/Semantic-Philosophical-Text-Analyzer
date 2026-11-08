@@ -319,10 +319,14 @@ def load_emotion_classifier():
     )
 
 
+@st.cache_data(show_spinner=False)
 def gemini_philosophical_insight(metin: str) -> str:
+    temiz = metin.strip()
+    if not temiz:
+        return ""
     genai.configure(api_key=st.secrets['GEMINI_API_KEY'])
     model = genai.GenerativeModel('gemini-3.8-flash')
-    prompt = f"{GEMINI_INSIGHT_PROMPT}\n\nText:\n{metin.strip()}"
+    prompt = f"{GEMINI_INSIGHT_PROMPT}\n\nText:\n{temiz}"
     yanit = model.generate_content(prompt)
     if not yanit.text:
         raise RuntimeError("Gemini returned empty insight text.")
@@ -646,17 +650,18 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-metin = st.text_area(
-    UI_EN["text_to_analyze"],
-    height=320,
-    placeholder=UI_EN["placeholder"],
-)
-
-analiz_et = st.button(UI_EN["analyze_button"], type="primary")
+with st.form("analysis_form", clear_on_submit=False):
+    metin = st.text_area(
+        UI_EN["text_to_analyze"],
+        height=320,
+        placeholder=UI_EN["placeholder"],
+    )
+    analiz_et = st.form_submit_button(UI_EN["analyze_button"], type="primary")
 
 if analiz_et:
     if not metin.strip():
         st.warning(UI_EN["warning_empty"])
+        st.session_state.pop("analysis_sonuc", None)
     else:
         try:
             with st.spinner(UI_EN["spinner"]):
@@ -679,35 +684,50 @@ if analiz_et:
                 except Exception as e:
                     st.error(f"Hata Detayı: {e}")
 
-            with st.expander("Semantic & Philosophical Insight", expanded=True):
-                if insight_metni:
-                    st.markdown(insight_metni)
-
-            tablo = duygu_tablosu_html(ust_uc, source_lang)
-            cevirildi = not source_lang.startswith("en")
-            pipe_notu = (
-                f'{UI_EN["bridge_note"]} · {UI_EN["source_language"]}: {source_lang.upper()}'
-                if cevirildi
-                else f'{UI_EN["source_language"]}: {source_lang.upper()}'
-            )
-
-            st.markdown(
-                f"""
-                <div class="result-panel">
-                    <p class="result-heading">{UI_EN["result_heading"]}</p>
-                    <p class="result-note">{UI_EN["result_note"].format(model=MODEL_ID)}</p>
-                    <p class="pipeline-note">{pipe_notu}</p>
-                    <p class="dominant-emotion">{UI_EN["dominant"]}: {baskın}</p>
-                    {tablo}
-                    <p class="result-note" style="margin-top: 1rem; margin-bottom: 0;">
-                        {UI_EN["footer_note"]}
-                    </p>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+                st.session_state["analysis_sonuc"] = {
+                    "insight_metni": insight_metni,
+                    "ust_uc": ust_uc,
+                    "source_lang": source_lang,
+                    "baskın": baskın,
+                }
         except Exception as exc:
             st.error(f'{UI_EN["error_prefix"]} {exc}')
+            st.session_state.pop("analysis_sonuc", None)
+
+if st.session_state.get("analysis_sonuc"):
+    sonuc = st.session_state["analysis_sonuc"]
+    insight_metni = sonuc["insight_metni"]
+    ust_uc = sonuc["ust_uc"]
+    source_lang = sonuc["source_lang"]
+    baskın = sonuc["baskın"]
+
+    with st.expander("Semantic & Philosophical Insight", expanded=True):
+        if insight_metni:
+            st.markdown(insight_metni)
+
+    tablo = duygu_tablosu_html(ust_uc, source_lang)
+    cevirildi = not source_lang.startswith("en")
+    pipe_notu = (
+        f'{UI_EN["bridge_note"]} · {UI_EN["source_language"]}: {source_lang.upper()}'
+        if cevirildi
+        else f'{UI_EN["source_language"]}: {source_lang.upper()}'
+    )
+
+    st.markdown(
+        f"""
+        <div class="result-panel">
+            <p class="result-heading">{UI_EN["result_heading"]}</p>
+            <p class="result-note">{UI_EN["result_note"].format(model=MODEL_ID)}</p>
+            <p class="pipeline-note">{pipe_notu}</p>
+            <p class="dominant-emotion">{UI_EN["dominant"]}: {baskın}</p>
+            {tablo}
+            <p class="result-note" style="margin-top: 1rem; margin-bottom: 0;">
+                {UI_EN["footer_note"]}
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 with st.expander(UI_EN["methodology_title"]):
     st.markdown(UI_EN["methodology_body"])
