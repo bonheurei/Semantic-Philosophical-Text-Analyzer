@@ -1,3 +1,6 @@
+import os
+
+import google.generativeai as genai
 import streamlit as st
 import requests
 from langdetect import LangDetectException, detect
@@ -26,6 +29,11 @@ ISO_MYMEMORY_TERCIH = {
 }
 
 MODEL_ID = "SamLowe/roberta-base-go_emotions"
+GEMINI_MODEL = "gemini-1.5-flash"
+GEMINI_INSIGHT_PROMPT = (
+    "Provide a brief, 2-sentence philosophical and semantic analysis of this text, "
+    "focusing on its underlying tone, subtext, or metaphorical meaning."
+)
 
 EMOTION_LABELS_EN = {
     "admiration": "Admiration",
@@ -163,6 +171,8 @@ UI_EN = {
         "spectrum of texts."
     ),
     "model_loading": "Loading Go Emotions model…",
+    "insight_title": "Semantic & Philosophical Insight",
+    "insight_unavailable": "Philosophical insight is temporarily unavailable.",
 }
 
 
@@ -305,6 +315,36 @@ def load_emotion_classifier():
         model=MODEL_ID,
         top_k=None,
     )
+
+
+def gemini_api_key() -> str:
+    key = os.environ.get("GEMINI_API_KEY")
+    if key:
+        return key
+    try:
+        return st.secrets["GEMINI_API_KEY"]
+    except Exception as exc:
+        raise RuntimeError(
+            "Gemini API key missing. Add GEMINI_API_KEY to "
+            ".streamlit/secrets.toml or the environment."
+        ) from exc
+
+
+def gemini_philosophical_insight(metin: str) -> str:
+    genai.configure(api_key=gemini_api_key())
+    model = genai.GenerativeModel(GEMINI_MODEL)
+    prompt = f"{GEMINI_INSIGHT_PROMPT}\n\nText:\n{metin.strip()}"
+    response = model.generate_content(prompt)
+    if not response or not getattr(response, "text", None):
+        raise RuntimeError("Gemini returned an empty response.")
+    return response.text.strip()
+
+
+def insight_in_source_language(insight_en: str, source_lang: str) -> str:
+    source_lang = (source_lang or "en").lower()
+    if source_lang.startswith("en"):
+        return insight_en
+    return guvenli_cevir(insight_en, GOOGLE_EN, source_lang)
 
 
 def metni_ingilizceye_cevir(metin: str, source_lang: str) -> str:
@@ -575,11 +615,18 @@ st.markdown(
             border-radius: 0 6px 6px 0;
         }
 
-        [data-testid="stExpander"] {
-            margin-top: 2.5rem;
+        [data-testid="stExpander"],
+        [data-testid="stExpander"].insight-expander {
+            margin-top: 1.25rem;
             border: 1px solid #2c313a;
             border-radius: 10px;
             background: #14181e;
+        }
+
+        [data-testid="stExpander"].insight-expander {
+            margin-bottom: 0.5rem;
+            border-color: #3d4a3a;
+            background: linear-gradient(165deg, #1a2218 0%, #14181e 100%);
         }
 
         [data-testid="stExpander"] summary {
@@ -635,6 +682,22 @@ if analiz_et:
                 )[0]
                 ust_uc = ust_uc_duzenle(skorlar)
                 baskın = emotion_display(ust_uc[0]["label"], source_lang)
+
+                try:
+                    insight_en = gemini_philosophical_insight(metin.strip())
+                    insight_metni = insight_in_source_language(insight_en, source_lang)
+                except Exception:
+                    insight_metni = UI_EN["insight_unavailable"]
+                    if not source_lang.startswith("en"):
+                        try:
+                            insight_metni = guvenli_cevir(
+                                UI_EN["insight_unavailable"], GOOGLE_EN, source_lang
+                            )
+                        except Exception:
+                            insight_metni = UI_EN["insight_unavailable"]
+
+            with st.expander(UI_EN["insight_title"], expanded=True):
+                st.markdown(insight_metni)
 
             tablo = duygu_tablosu_html(ust_uc, source_lang)
             cevirildi = not source_lang.startswith("en")
