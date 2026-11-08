@@ -1,3 +1,4 @@
+import concurrent.futures
 import json
 import urllib.parse
 import urllib.request
@@ -34,6 +35,124 @@ GEMINI_INSIGHT_PROMPT = (
     "Provide a brief, 2-sentence philosophical and semantic analysis of this text, "
     "focusing on its underlying tone, subtext, or metaphorical meaning."
 )
+GEMINI_INSIGHT_REQUEST_TIMEOUT_SEC = 60
+GEMINI_INSIGHT_TOTAL_TIMEOUT_SEC = 120
+GEMINI_INSIGHT_MAX_TEXT_CHARS = 2400
+GEMINI_INSIGHT_MODEL_PREFERENCES = (
+    "gemini-2.0-flash-lite",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-001",
+    "gemini-3.8-flash",
+)
+GEMINI_CLIENT_API_VERSIONS = ("v1beta", "v1", None)
+
+
+class GeminiConnectionTimeout(Exception):
+    """Gemini generate_content did not finish within the allowed wait time."""
+
+
+class GeminiServiceUnavailable(Exception):
+    """Gemini returned overload / capacity errors for all attempted models."""
+
+
+def _gemini_retryable(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return any(
+        token in msg
+        for token in (
+            "503",
+            "504",
+            "429",
+            "unavailable",
+            "high demand",
+            "resource exhausted",
+            "resource_exhausted",
+            "overloaded",
+            "deadline_exceeded",
+            "deadline expired",
+        )
+    )
+
+
+def _gemini_deadline(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return (
+        "504" in msg
+        or "deadline_exceeded" in msg
+        or "deadline expired" in msg
+    )
+
+
+def _gemini_model_not_found(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "404" in msg or "not_found" in msg or "is not found" in msg
+
+
+def _gemini_insight_clients():
+    for api_version in GEMINI_CLIENT_API_VERSIONS:
+        opts: dict = {"timeout": GEMINI_INSIGHT_REQUEST_TIMEOUT_SEC * 1000}
+        if api_version:
+            opts["api_version"] = api_version
+        yield genai.Client(api_key=st.secrets["GEMINI_API_KEY"], http_options=opts)
+
+
+def _model_supports_generate_content(model: object) -> bool:
+    for attr in ("supported_actions", "supported_generation_methods"):
+        actions = getattr(model, attr, None) or []
+        if "generateContent" in actions:
+            return True
+    return False
+
+
+def _gemini_model_id_variants(model: object) -> list[str]:
+    full = (getattr(model, "name", None) or "").strip()
+    short = full.split("/")[-1] if full else ""
+    variants: list[str] = []
+    for candidate in (short, full):
+        if candidate and candidate not in variants:
+            variants.append(candidate)
+    return variants
+
+
+def _gemini_insight_model_ids(client) -> list[str]:
+    discovered: list[str] = []
+    try:
+        for model in client.models.list():
+            if not _model_supports_generate_content(model):
+                continue
+            for model_id in _gemini_model_id_variants(model):
+                low = model_id.lower()
+                if "gemini" not in low:
+                    continue
+                if any(
+                    token in low
+                    for token in (
+                        "tts",
+                        "image",
+                        "live",
+                        "robotics",
+                        "computer-use",
+                        "embedding",
+                        "preview-tts",
+                    )
+                ):
+                    continue
+                if model_id not in discovered:
+                    discovered.append(model_id)
+    except Exception:
+        pass
+
+    if discovered:
+        ordered: list[str] = []
+        for preferred in GEMINI_INSIGHT_MODEL_PREFERENCES:
+            if preferred in discovered and preferred not in ordered:
+                ordered.append(preferred)
+        for model_id in discovered:
+            if model_id not in ordered:
+                ordered.append(model_id)
+        return ordered
+    return list(GEMINI_INSIGHT_MODEL_PREFERENCES)
+
 
 EMOTION_LABELS_EN = {
     "admiration": "Admiration",
@@ -322,16 +441,62 @@ def gemini_philosophical_insight(metin: str) -> str:
     temiz = metin.strip()
     if not temiz:
         return ""
-    prompt = f"{GEMINI_INSIGHT_PROMPT}\n\nText:\n{temiz}"
-    client = genai.Client(api_key=st.secrets['GEMINI_API_KEY'])
-    yanit = client.models.generate_content(
-        model='gemini-3.8-flash',
-        contents=prompt,
-    )
-    metin_yanit = (yanit.text or "").strip()
-    if not metin_yanit:
-        raise RuntimeError("Gemini returned empty insight text.")
-    return metin_yanit
+    metin_ozet = temiz[:GEMINI_INSIGHT_MAX_TEXT_CHARS]
+    prompt = f"{GEMINI_INSIGHT_PROMPT}\n\nText:\n{metin_ozet}"
+
+    def _generate() -> str:
+        last_exc: Exception | None = None
+        saw_not_found = False
+        for client in _gemini_insight_clients():
+            model_ids = _gemini_insight_model_ids(client)
+            for model_id in model_ids:
+                try:
+                    yanit = client.models.generate_content(
+                        model=model_id,
+                        contents=prompt,
+                    )
+                except Exception as exc:
+                    exc_name = type(exc).__name__.lower()
+                    last_exc = exc
+                    if _gemini_model_not_found(exc):
+                        saw_not_found = True
+                        continue
+                    if (
+                        "timeout" in exc_name
+                        or "timed out" in str(exc).lower()
+                        or _gemini_deadline(exc)
+                        or _gemini_retryable(exc)
+                    ):
+                        continue
+                    raise
+                metin_yanit = (yanit.text or "").strip()
+                if not metin_yanit:
+                    raise RuntimeError("Gemini returned empty insight text.")
+                return metin_yanit
+        if last_exc and (
+            _gemini_deadline(last_exc)
+            or "timed out" in str(last_exc).lower()
+            or "timeout" in type(last_exc).__name__.lower()
+        ):
+            raise GeminiConnectionTimeout from last_exc
+        if saw_not_found and last_exc:
+            raise RuntimeError(
+                "Bu API anahtarı için generateContent destekleyen "
+                "uygun bir Gemini modeli bulunamadı."
+            ) from last_exc
+        if last_exc and _gemini_retryable(last_exc):
+            raise GeminiServiceUnavailable from last_exc
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("Gemini insight çağrısı yapılandırılamadı.")
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(_generate).result(
+                timeout=GEMINI_INSIGHT_TOTAL_TIMEOUT_SEC
+            )
+    except concurrent.futures.TimeoutError as exc:
+        raise GeminiConnectionTimeout from exc
 
 
 def insight_in_source_language(insight_en: str, source_lang: str) -> str:
@@ -681,8 +846,29 @@ if analiz_et:
                 try:
                     insight_en = gemini_philosophical_insight(metin.strip())
                     insight_metni = insight_in_source_language(insight_en, source_lang)
+                except GeminiConnectionTimeout:
+                    st.error(
+                        "Bağlantı zaman aşımına uğradı (504). "
+                        "Daha kısa bir metin deneyin veya biraz sonra tekrar Analyze Text’e basın."
+                    )
+                except GeminiServiceUnavailable:
+                    st.warning(
+                        "Gemini şu an çok yoğun (503). Bu geçicidir; "
+                        "birkaç dakika sonra tekrar Analyze Text’e basın."
+                    )
                 except Exception as e:
-                    st.error(f"Hata Detayı: {e}")
+                    if _gemini_deadline(e):
+                        st.error(
+                            "Bağlantı zaman aşımına uğradı (504). "
+                            "Daha kısa bir metin deneyin veya biraz sonra tekrar Analyze Text’e basın."
+                        )
+                    elif _gemini_retryable(e):
+                        st.warning(
+                            "Gemini şu an çok yoğun (503). Bu geçicidir; "
+                            "birkaç dakika sonra tekrar Analyze Text’e basın."
+                        )
+                    else:
+                        st.error(f"Hata Detayı: {e}")
 
             with st.expander("Semantic & Philosophical Insight", expanded=True):
                 if insight_metni:
