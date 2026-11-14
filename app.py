@@ -700,27 +700,26 @@ UI_EN = {
         "Scores are multi-label probabilities."
     ),
     "tools_heading": "About this tool",
-    "methodology_title": "Methodology & Linguistic Limitations",
+    "methodology_title": "About this reading",
     "methodology_body": (
-        "This tool uses an English bridge to analyze many non-English passages. "
-        "We are linguistically aware that existential and cultural emotional "
-        "states unique to a language may undergo semantic shift when rendered "
-        "in English. The emotion spectrum aims at a broadly comparable profile "
-        "rather than a perfect map of the source language's feeling-vocabulary."
+        "This analyzer looks for lived tone, subtext, and philosophical pressure — "
+        "not plot keywords alone. A death in the story is not automatically grief "
+        "in the voice. The aim is a careful reading that resists inventing depth "
+        "where the passage is ordinary."
     ),
     "methodology_points": (
-        "Very short texts receive emotion labels only; philosophical insight "
-        "needs a longer passage so the model does not over-read ordinary lines.",
-        "On longer passages, emotions and insight share one Gemini pass on the "
-        "original wording (tone and subtext); RoBERTa remains the fallback.",
-        "Neutrality is softened unless the line is a true greeting; affective "
-        "labels are preferred when any clear mood is present.",
-        "For scoring fallback, non-English text may be translated into English; "
-        "that bridge can still shift cultural feeling-vocabulary.",
-        "Long RoBERTa fallbacks use peak-weighted windows so strong local tone "
-        "is not washed out by flat stretches.",
-        "Bar lengths show relative share among the top three labels, not "
-        "independent probabilities that sum to 100%.",
+        "Short lines receive an emotion spectrum only. Philosophical insight "
+        "needs a longer passage, so everyday greetings are not over-interpreted.",
+        "On longer texts, insight and emotion are read together from the original "
+        "wording — stance, irony, and what is withheld matter as much as what is said.",
+        "The spectrum prefers clear affective tone when it is present. Neutrality "
+        "stays for flat or purely informational lines, and for brief greetings.",
+        "Readings are guided by a growing library of literary close-reading "
+        "examples, and by Helpful / Unhelpful feedback from readers over time.",
+        "Results can be shown in many languages. Some steps still lean on an "
+        "English bridge, so culturally specific feeling-words may shift slightly.",
+        "Emotion bars show relative share among the top three labels — a profile, "
+        "not a laboratory measurement that must sum to absolute truth.",
     ),
     "model_loading": "Loading emotion classifier…",
     "insight_title": "Semantic & Philosophical Insight",
