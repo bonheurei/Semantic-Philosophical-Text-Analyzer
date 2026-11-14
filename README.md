@@ -11,8 +11,4 @@ That difference is the project.
 - An emotion spectrum (felt stance, not just plot keywords)  
 - Feedback (Helpful / Unhelpful) that quietly improves later readings  
 **Stack:** Streamlit · Gemini · GoEmotions · literary reference memory · Supabase feedback  
-```bash
-pip install -r requirements.txt
-python -m streamlit run app.py
-```
 It returns a short philosophical insight and an emotion spectrum shaped by what the voice is doing, not only by what happens in the plot. When a reading helps, you can say so — and later readings grow from that.
