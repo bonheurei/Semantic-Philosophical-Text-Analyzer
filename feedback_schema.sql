@@ -10,7 +10,10 @@ create table if not exists public.insight_feedback (
   text text not null,
   insight text not null,
   emotions jsonb not null default '[]'::jsonb,
-  results_lang text not null default 'en'
+  results_lang text not null default 'en',
+  trust double precision not null default 0.5,
+  client_id text not null default '',
+  text_hash text not null default ''
 );
 
 create index if not exists insight_feedback_ts_idx

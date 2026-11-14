@@ -1,6 +1,7 @@
 import json
 import random
 import re
+import uuid
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
@@ -1838,6 +1839,14 @@ st.markdown(
             margin: 0;
         }
 
+        .captcha-note {
+            font-family: var(--sans);
+            font-size: 0.74rem;
+            color: var(--copper);
+            margin: 0.35rem 0 0.15rem 0;
+            letter-spacing: 0.02em;
+        }
+
         .result-panel {
             position: relative;
             margin-top: 1.35rem;
@@ -2177,6 +2186,12 @@ if analiz_et:
 
             soz, soz_kaynak = rastgele_analiz_sozu()
             st.session_state.pop("insight_feedback_seg", None)
+            st.session_state.pop("feedback_captcha_ok", None)
+            st.session_state.pop("feedback_captcha", None)
+            st.session_state.pop("feedback_captcha_fail", None)
+            st.session_state.pop("feedback_captcha_input", None)
+            if "feedback_client_id" not in st.session_state:
+                st.session_state["feedback_client_id"] = uuid.uuid4().hex
             st.session_state["last_analysis"] = {
                 "text": temiz_metin,
                 "insight": insight_metni,
@@ -2197,7 +2212,7 @@ if analiz_et:
             st.error(f'{UI_EN["error_prefix"]} {exc}')
 
 def _submit_insight_feedback(vote: str) -> None:
-    """Runs on button click before the next render — avoids button flash."""
+    """Save a vote; anti-abuse runs inside feedback_memory."""
     la = st.session_state.get("last_analysis")
     if not isinstance(la, dict) or la.get("feedback_vote"):
         return
@@ -2208,9 +2223,12 @@ def _submit_insight_feedback(vote: str) -> None:
             insight=la.get("insight") or "",
             emotions=la.get("ust_uc") or [],
             results_lang=la.get("results_lang") or "en",
+            client_id=str(st.session_state.get("feedback_client_id") or ""),
         )
         st.session_state["last_analysis"]["feedback_vote"] = vote
         st.session_state.pop("_feedback_error", None)
+    except feedback_memory.FeedbackRejected as exc:
+        st.session_state["_feedback_error"] = str(exc)
     except Exception as exc:
         st.session_state["_feedback_error"] = str(exc)
 
@@ -2236,7 +2254,7 @@ if sonuc:
         )
         fb_err = st.session_state.pop("_feedback_error", None)
         if fb_err:
-            st.warning(f"Feedback could not be saved: {fb_err}")
+            st.warning(fb_err)
         onceki_oy = sonuc.get("feedback_vote")
         if onceki_oy:
             st.markdown(
@@ -2247,7 +2265,6 @@ if sonuc:
         else:
             pending = st.session_state.get("insight_feedback_seg")
             if pending in (UI_EN["feedback_up"], UI_EN["feedback_down"]):
-                # Selection already made — save without re-drawing controls.
                 _submit_insight_feedback(
                     "up" if pending == UI_EN["feedback_up"] else "down"
                 )

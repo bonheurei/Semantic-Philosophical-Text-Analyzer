@@ -1,17 +1,15 @@
-"""User feedback loop with durable remote storage (Supabase) + local fallback.
+"""User feedback loop with durable storage + anti-abuse gating.
 
-Upvotes → preferred close-reading exemplars for later Gemini prompts.
-Downvotes → short 'avoid this failure mode' notes.
+Votes are always stored when valid, but only sufficiently trusted rows
+enter Gemini prompts — so troll/spam feedback cannot easily steer readings.
 
-Remote (multi-user / Streamlit Cloud):
-  secrets: SUPABASE_URL, SUPABASE_KEY
-  table: insight_feedback  (see data/feedback_schema.sql)
-
-Local fallback when remote secrets are missing: data/feedback.jsonl
+Remote: SUPABASE_URL + SUPABASE_KEY (see data/feedback_schema*.sql)
+Local fallback: data/feedback.jsonl
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -30,11 +28,31 @@ MAX_UP_EXAMPLES = 2
 MAX_DOWN_NOTES = 2
 TEXT_STORE_CHARS = 1200
 INSIGHT_STORE_CHARS = 900
-REMOTE_FETCH_LIMIT = 400
+REMOTE_FETCH_LIMIT = 500
+
+MIN_TEXT_CHARS = 40
+MIN_INSIGHT_CHARS = 55
+MAX_VOTES_PER_HOUR = 8
+MAX_VOTES_PER_DAY = 25
+MIN_TRUST_UP = 0.55
+MIN_TRUST_DOWN = 0.62
+
+_GENERIC_INSIGHT = re.compile(
+    r"(this text (explores|discusses|shows|highlights|delves)|"
+    r"the author (explores|discusses)|"
+    r"themes? of .{0,40}(and|with)|"
+    r"in conclusion|overall,? the (passage|text)|"
+    r"deep(ly)? (philosophical|existential) (meaning|significance))",
+    re.IGNORECASE,
+)
 _TOKEN = re.compile(
     r"[a-zA-ZçğıöşüÇĞİÖŞÜâîûÂÎÛа-яА-ЯёЁ\u3040-\u30ff\u3400-\u9fff']+",
     re.UNICODE,
 )
+
+
+class FeedbackRejected(ValueError):
+    """Raised when a vote is invalid or rate-limited."""
 
 
 def _tokenize(metin: str) -> set[str]:
@@ -64,6 +82,11 @@ def remote_enabled() -> bool:
 
 def storage_mode() -> str:
     return "supabase" if remote_enabled() else "local"
+
+
+def text_hash(metin: str) -> str:
+    norm = re.sub(r"\s+", " ", (metin or "").strip().lower())
+    return hashlib.sha256(norm.encode("utf-8")).hexdigest()[:20]
 
 
 def _supabase_headers(*, write: bool = False) -> dict[str, str]:
@@ -121,6 +144,10 @@ def _normalize_row(row: dict) -> dict | None:
             emotions = json.loads(emotions)
         except json.JSONDecodeError:
             emotions = []
+    try:
+        trust = float(row.get("trust", 0.5))
+    except (TypeError, ValueError):
+        trust = 0.5
     return {
         "id": str(row.get("id") or ""),
         "ts": int(row.get("ts") or 0),
@@ -129,6 +156,10 @@ def _normalize_row(row: dict) -> dict | None:
         "insight": str(row.get("insight") or ""),
         "emotions": emotions if isinstance(emotions, list) else [],
         "results_lang": str(row.get("results_lang") or "en"),
+        "trust": max(0.0, min(1.0, trust)),
+        "client_id": str(row.get("client_id") or ""),
+        "text_hash": str(row.get("text_hash") or "")
+        or text_hash(str(row.get("text") or "")),
     }
 
 
@@ -158,35 +189,69 @@ def _save_local(kayit: dict) -> None:
 
 
 def _load_remote(limit: int = REMOTE_FETCH_LIMIT) -> list[dict]:
-    query = urllib.parse.urlencode(
-        {
-            "select": "id,ts,vote,text,insight,emotions,results_lang",
-            "order": "ts.desc",
-            "limit": str(limit),
-        }
+    # Prefer extended columns; fall back if upgrade SQL not applied yet.
+    select_full = (
+        "id,ts,vote,text,insight,emotions,results_lang,trust,client_id,text_hash"
     )
-    url = _supabase_url(f"{TABLE_NAME}?{query}")
-    payload = _http_json("GET", url, headers=_supabase_headers())
-    if not isinstance(payload, list):
-        return []
-    kayitlar: list[dict] = []
-    for row in payload:
-        norm = _normalize_row(row)
-        if norm:
-            kayitlar.append(norm)
-    # Oldest → newest for fallback slicing consistency with local.
-    kayitlar.reverse()
-    return kayitlar
+    select_basic = "id,ts,vote,text,insight,emotions,results_lang"
+    for select in (select_full, select_basic):
+        query = urllib.parse.urlencode(
+            {
+                "select": select,
+                "order": "ts.desc",
+                "limit": str(limit),
+            }
+        )
+        url = _supabase_url(f"{TABLE_NAME}?{query}")
+        try:
+            payload = _http_json("GET", url, headers=_supabase_headers())
+        except RuntimeError:
+            continue
+        if not isinstance(payload, list):
+            return []
+        kayitlar: list[dict] = []
+        for row in payload:
+            norm = _normalize_row(row)
+            if norm:
+                kayitlar.append(norm)
+        kayitlar.reverse()
+        return kayitlar
+    return []
 
 
 def _save_remote(kayit: dict) -> None:
     url = _supabase_url(TABLE_NAME)
-    _http_json(
-        "POST",
-        url,
-        headers=_supabase_headers(write=True),
-        body=kayit,
-    )
+    try:
+        _http_json(
+            "POST",
+            url,
+            headers=_supabase_headers(write=True),
+            body=kayit,
+        )
+        return
+    except RuntimeError as exc:
+        # Old schema without anti-abuse columns.
+        if "trust" in str(exc) or "client_id" in str(exc) or "text_hash" in str(exc) or "400" in str(exc):
+            basic = {
+                k: kayit[k]
+                for k in (
+                    "id",
+                    "ts",
+                    "vote",
+                    "text",
+                    "insight",
+                    "emotions",
+                    "results_lang",
+                )
+            }
+            _http_json(
+                "POST",
+                url,
+                headers=_supabase_headers(write=True),
+                body=basic,
+            )
+            return
+        raise
 
 
 def load_feedback(limit: int = 400) -> list[dict]:
@@ -194,9 +259,87 @@ def load_feedback(limit: int = 400) -> list[dict]:
         try:
             return _load_remote(limit=limit)
         except Exception:
-            # Prefer continuity over hard failure during retrieval.
             return _load_local(limit=limit)
     return _load_local(limit=limit)
+
+
+def _looks_generic(insight: str) -> bool:
+    temiz = (insight or "").strip()
+    if len(temiz) < MIN_INSIGHT_CHARS:
+        return True
+    if _GENERIC_INSIGHT.search(temiz):
+        return True
+    # Very low lexical variety often means boilerplate.
+    toks = _tokenize(temiz)
+    if len(temiz) > 80 and len(toks) < 12:
+        return True
+    return False
+
+
+def _client_recent_counts(
+    rows: list[dict], client_id: str, now: int
+) -> tuple[int, int]:
+    hour = 0
+    day = 0
+    for row in rows:
+        if (row.get("client_id") or "") != client_id:
+            continue
+        age = now - int(row.get("ts") or 0)
+        if age <= 3600:
+            hour += 1
+        if age <= 86400:
+            day += 1
+    return hour, day
+
+
+def _compute_trust(
+    *,
+    vote: str,
+    text: str,
+    insight: str,
+    client_id: str,
+    t_hash: str,
+    existing: list[dict],
+    now: int,
+) -> float:
+    trust = 0.40
+    if len(insight) >= 110:
+        trust += 0.08
+    if len(insight) >= 180:
+        trust += 0.05
+    if len(text) >= 100:
+        trust += 0.05
+    if _looks_generic(insight):
+        trust -= 0.28
+
+    hour, day = _client_recent_counts(existing, client_id, now)
+    if hour >= 3:
+        trust -= 0.07 * (hour - 2)
+    if day >= 12:
+        trust -= 0.04 * (day - 11)
+
+    client_rows = [r for r in existing if (r.get("client_id") or "") == client_id]
+    if len(client_rows) >= 3:
+        span = now - min(int(r.get("ts") or now) for r in client_rows)
+        if span >= 3600:
+            trust += 0.10
+        if span >= 86400:
+            trust += 0.06
+
+    same_text = [r for r in existing if (r.get("text_hash") or "") == t_hash]
+    if same_text:
+        ups = sum(1 for r in same_text if r.get("vote") == "up")
+        downs = sum(1 for r in same_text if r.get("vote") == "down")
+        if vote == "up" and downs > ups:
+            trust -= 0.18
+        if vote == "down" and ups > downs:
+            trust -= 0.18
+
+    # Downvotes are easier to weaponize against good readings.
+    if vote == "down":
+        trust -= 0.04
+
+    return max(0.05, min(0.95, trust))
 
 
 def save_feedback(
@@ -206,21 +349,57 @@ def save_feedback(
     insight: str,
     emotions: list[dict] | None = None,
     results_lang: str = "en",
+    client_id: str = "",
 ) -> dict:
     if vote not in {"up", "down"}:
-        raise ValueError("vote must be 'up' or 'down'")
+        raise FeedbackRejected("Invalid vote.")
     temiz_text = (text or "").strip()[:TEXT_STORE_CHARS]
     temiz_insight = (insight or "").strip()[:INSIGHT_STORE_CHARS]
-    if not temiz_text or not temiz_insight:
-        raise ValueError("text and insight are required")
+    if len(temiz_text) < MIN_TEXT_CHARS or len(temiz_insight) < MIN_INSIGHT_CHARS:
+        raise FeedbackRejected(
+            "Feedback needs a fuller passage and insight before it can be stored."
+        )
+    if vote == "up" and _looks_generic(temiz_insight):
+        raise FeedbackRejected(
+            "This insight looks too generic to train future readings."
+        )
+
+    cid = (client_id or "").strip() or "anonymous"
+    t_hash = text_hash(temiz_text)
+    now = int(time.time())
+    existing = load_feedback(limit=REMOTE_FETCH_LIMIT)
+
+    # Same client cannot vote twice on the same passage.
+    for row in existing:
+        if (row.get("client_id") or "") == cid and (row.get("text_hash") or "") == t_hash:
+            raise FeedbackRejected("You already voted on this passage.")
+
+    hour, day = _client_recent_counts(existing, cid, now)
+    if hour >= MAX_VOTES_PER_HOUR or day >= MAX_VOTES_PER_DAY:
+        raise FeedbackRejected(
+            "Too many votes from this session. Please try again later."
+        )
+
+    trust = _compute_trust(
+        vote=vote,
+        text=temiz_text,
+        insight=temiz_insight,
+        client_id=cid,
+        t_hash=t_hash,
+        existing=existing,
+        now=now,
+    )
     kayit = {
         "id": uuid.uuid4().hex[:12],
-        "ts": int(time.time()),
+        "ts": now,
         "vote": vote,
         "text": temiz_text,
         "insight": temiz_insight,
         "emotions": emotions or [],
         "results_lang": results_lang,
+        "trust": round(trust, 4),
+        "client_id": cid,
+        "text_hash": t_hash,
     }
     if remote_enabled():
         _save_remote(kayit)
@@ -253,7 +432,12 @@ def retrieve_feedback(
     k: int = 2,
     match_text: str | None = None,
 ) -> list[dict]:
-    rows = [r for r in load_feedback() if r.get("vote") == vote]
+    min_trust = MIN_TRUST_DOWN if vote == "down" else MIN_TRUST_UP
+    rows = [
+        r
+        for r in load_feedback()
+        if r.get("vote") == vote and float(r.get("trust") or 0) >= min_trust
+    ]
     if not rows or k <= 0:
         return []
     query = _tokenize(metin)
@@ -268,17 +452,21 @@ def retrieve_feedback(
     except Exception:
         pass
     if not query:
-        return rows[-k:]
+        # Still prefer higher trust among recent trusted rows.
+        rows = sorted(rows, key=lambda r: float(r.get("trust") or 0), reverse=True)
+        return rows[:k]
 
     skorlu: list[tuple[float, dict]] = []
     for row in rows:
-        skor = _score_against_query(query, row)
-        if skor > 0:
-            skorlu.append((skor, row))
+        sim = _score_against_query(query, row)
+        if sim <= 0:
+            continue
+        trust = float(row.get("trust") or 0.5)
+        skorlu.append((sim * (0.55 + 0.45 * trust), row))
     skorlu.sort(key=lambda x: x[0], reverse=True)
     if skorlu:
         return [r for _, r in skorlu[:k]]
-    return rows[-k:]
+    return []
 
 
 def format_feedback_for_prompt(
