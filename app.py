@@ -727,9 +727,8 @@ UI_EN = {
     "insight_unavailable": "Philosophical insight is temporarily unavailable.",
     "feedback_prompt": "Was this insight perceptive?",
     "feedback_up": "Helpful",
-    "feedback_down": "Off",
+    "feedback_down": "Unhelpful",
     "feedback_thanks": "Thanks — this will shape future readings.",
-    "feedback_saved": "Feedback saved.",
     "feedback_local_only": (
         "Feedback is saving locally right now. Add SUPABASE_URL and "
         "SUPABASE_KEY in secrets for durable multi-user storage."
@@ -1273,9 +1272,15 @@ def _top3_notr_sonra(not_notr: list[dict], sirali: list[dict]) -> list[dict]:
     for kayit in not_notr + sirali:
         if kayit in secilen:
             continue
-        secilen.append(kayit)
+        secilen.append(dict(kayit))
         if len(secilen) == 3:
             break
+    # Keep UI coherent: dominant (first) must also show the highest share.
+    if secilen:
+        dom = float(secilen[0]["score"])
+        for i in range(1, len(secilen)):
+            if float(secilen[i]["score"]) > dom:
+                secilen[i]["score"] = max(0.01, dom * 0.92)
     return _gosterim_uctus_normallestir(secilen)
 
 
@@ -2172,6 +2177,7 @@ if analiz_et:
                     )
 
             soz, soz_kaynak = rastgele_analiz_sozu()
+            st.session_state.pop("insight_feedback_seg", None)
             st.session_state["last_analysis"] = {
                 "text": temiz_metin,
                 "insight": insight_metni,
@@ -2191,12 +2197,35 @@ if analiz_et:
             st.session_state.pop("last_analysis", None)
             st.error(f'{UI_EN["error_prefix"]} {exc}')
 
+def _submit_insight_feedback(vote: str) -> None:
+    """Runs on button click before the next render — avoids button flash."""
+    la = st.session_state.get("last_analysis")
+    if not isinstance(la, dict) or la.get("feedback_vote"):
+        return
+    try:
+        feedback_memory.save_feedback(
+            vote=vote,
+            text=la.get("text") or "",
+            insight=la.get("insight") or "",
+            emotions=la.get("ust_uc") or [],
+            results_lang=la.get("results_lang") or "en",
+        )
+        st.session_state["last_analysis"]["feedback_vote"] = vote
+        st.session_state.pop("_feedback_error", None)
+    except Exception as exc:
+        st.session_state["_feedback_error"] = str(exc)
+
+
 sonuc = st.session_state.get("last_analysis")
 if sonuc:
     ust_uc = sonuc.get("ust_uc") or []
-    baskın = sonuc.get("baskin") or ""
     insight_metni = sonuc.get("insight") or ""
     results_lang_sonuc = sonuc.get("results_lang") or results_lang
+    baskın = (
+        emotion_display(ust_uc[0]["label"], results_lang_sonuc)
+        if ust_uc
+        else (sonuc.get("baskin") or "")
+    )
     tablo = duygu_tablosu_html(ust_uc, results_lang_sonuc) if ust_uc else ""
 
     if not sonuc.get("deep"):
@@ -2206,57 +2235,42 @@ if sonuc:
             insight_paneli_html(insight_metni),
             unsafe_allow_html=True,
         )
-        st.markdown(
-            f'<div class="feedback-row">'
-            f'<p class="feedback-prompt">{UI_EN["feedback_prompt"]}</p>'
-            f"</div>",
-            unsafe_allow_html=True,
-        )
+        fb_err = st.session_state.pop("_feedback_error", None)
+        if fb_err:
+            st.warning(f"Feedback could not be saved: {fb_err}")
         onceki_oy = sonuc.get("feedback_vote")
         if onceki_oy:
-            st.caption(UI_EN["feedback_thanks"])
+            st.markdown(
+                f'<p class="feedback-prompt" style="margin:0.85rem 0 0.2rem 0;">'
+                f'{UI_EN["feedback_thanks"]}</p>',
+                unsafe_allow_html=True,
+            )
         else:
-            if feedback_memory.storage_mode() != "supabase":
-                st.caption(UI_EN["feedback_local_only"])
-            up_col, down_col, _ = st.columns([1, 1, 4])
-            with up_col:
-                if st.button(
-                    UI_EN["feedback_up"],
-                    key="feedback_up_btn",
-                    use_container_width=True,
-                ):
-                    try:
-                        feedback_memory.save_feedback(
-                            vote="up",
-                            text=sonuc.get("text") or "",
-                            insight=insight_metni,
-                            emotions=ust_uc,
-                            results_lang=results_lang_sonuc,
-                        )
-                        st.session_state["last_analysis"]["feedback_vote"] = "up"
-                        st.success(UI_EN["feedback_saved"])
-                        st.rerun()
-                    except Exception as fb_exc:
-                        st.warning(f"Feedback could not be saved: {fb_exc}")
-            with down_col:
-                if st.button(
-                    UI_EN["feedback_down"],
-                    key="feedback_down_btn",
-                    use_container_width=True,
-                ):
-                    try:
-                        feedback_memory.save_feedback(
-                            vote="down",
-                            text=sonuc.get("text") or "",
-                            insight=insight_metni,
-                            emotions=ust_uc,
-                            results_lang=results_lang_sonuc,
-                        )
-                        st.session_state["last_analysis"]["feedback_vote"] = "down"
-                        st.success(UI_EN["feedback_saved"])
-                        st.rerun()
-                    except Exception as fb_exc:
-                        st.warning(f"Feedback could not be saved: {fb_exc}")
+            pending = st.session_state.get("insight_feedback_seg")
+            if pending in (UI_EN["feedback_up"], UI_EN["feedback_down"]):
+                # Selection already made — save without re-drawing controls.
+                _submit_insight_feedback(
+                    "up" if pending == UI_EN["feedback_up"] else "down"
+                )
+                st.rerun()
+            else:
+                st.markdown(
+                    f'<div class="feedback-row">'
+                    f'<p class="feedback-prompt">{UI_EN["feedback_prompt"]}</p>'
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+                _storage = getattr(feedback_memory, "storage_mode", None)
+                if callable(_storage) and _storage() != "supabase":
+                    st.caption(UI_EN["feedback_local_only"])
+                elif not callable(_storage):
+                    st.caption(UI_EN["feedback_local_only"])
+                st.segmented_control(
+                    UI_EN["feedback_prompt"],
+                    options=[UI_EN["feedback_up"], UI_EN["feedback_down"]],
+                    key="insight_feedback_seg",
+                    label_visibility="collapsed",
+                )
 
     if ust_uc and tablo:
         st.markdown(
