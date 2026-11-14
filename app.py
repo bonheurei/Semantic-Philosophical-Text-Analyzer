@@ -1,8 +1,9 @@
-import concurrent.futures
 import json
+import random
 import re
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
 from google import genai
 import streamlit as st
@@ -55,12 +56,28 @@ ISO_MYMEMORY_TERCIH = {
 }
 
 ROBERTA_MODEL_ID = "SamLowe/roberta-base-go_emotions"
-ROBERTA_CHUNK_WORDS = 320
-ROBERTA_CHUNK_OVERLAP = 60
-ROBERTA_MAX_CHUNKS = 4
+ROBERTA_CHUNK_WORDS = 280
+ROBERTA_CHUNK_OVERLAP = 80
+ROBERTA_MAX_CHUNKS = 6
 PHATIC_MAX_WORDS = 12
-SALIENT_EMOTION_MIN = 0.22
+SALIENT_EMOTION_MIN = 0.18
+NEUTRAL_CHALLENGER_MIN = 0.18
+PHATIC_CHALLENGER_MIN = 0.35
 LITERARY_MIN_WORDS = 18
+MIN_CHARS_DEEP = 100
+MIN_WORDS_DEEP = 14
+PHATIC_KALIP = re.compile(
+    r"^\s*(hi+|hello|hey|merhaba|selam|how are you|nasılsın|nasilsin|"
+    r"what's up|whats up|iyi misin|gunaydin|günaydın|good morning|"
+    r"good (evening|night)|iyi akşamlar|iyi geceler)[\s\?\!\.\,]*$",
+    re.IGNORECASE,
+)
+GEMINI_INSIGHT_PROMPT = (
+    "Provide a brief, 2-sentence philosophical and semantic analysis of this text, "
+    "focusing on its underlying tone, subtext, or metaphorical meaning. "
+    "If the passage is ordinary, conversational, or lacks subtext, say so plainly—"
+    "do not invent deep meaning."
+)
 EDISI_DUYGU_INKAR = re.compile(
     r"(hiçbir şey hisset|hissetmiyor|hissetmedim|duygum yok|duygu yok|"
     r"felt nothing|don't feel|didn't feel|do not feel|no feeling|numb|detached)",
@@ -78,10 +95,6 @@ EDISI_KARSIT = re.compile(
 EDISI_BENZETME = re.compile(
     r"(sanki|gibi bir|metafor|metaphor|\bas if\b|\blike a\b)",
     re.IGNORECASE,
-)
-GEMINI_INSIGHT_PROMPT = (
-    "Provide a brief, 2-sentence philosophical and semantic analysis of this text, "
-    "focusing on its underlying tone, subtext, or metaphorical meaning."
 )
 ANALYSIS_LANGUAGES: dict[str, tuple[str, str]] = {
     "Arabic": ("ar", "Arabic"),
@@ -135,26 +148,36 @@ def gemini_output_language_name(output_lang: str) -> str:
         return GEMINI_OUTPUT_LANGUAGE_NAMES[ham]
     kok = ham.split("-")[0]
     return GEMINI_OUTPUT_LANGUAGE_NAMES.get(kok, "English")
-GEMINI_INSIGHT_REQUEST_TIMEOUT_SEC = 60
-GEMINI_INSIGHT_TOTAL_TIMEOUT_SEC = 120
-GEMINI_INSIGHT_MAX_TEXT_CHARS = 2400
+GEMINI_INSIGHT_REQUEST_TIMEOUT_SEC = 28
+GEMINI_INSIGHT_TOTAL_TIMEOUT_SEC = 35
+GEMINI_INSIGHT_MAX_TEXT_CHARS = 1000
+GEMINI_INSIGHT_RETRY_CHARS = 550
+# AQ… keys (AI Studio / consumer) expose Gemini 3.x flash family; 2.0 is 404.
 GEMINI_INSIGHT_MODEL_PREFERENCES = (
+    "gemini-3.1-flash-lite",
+    "gemini-3.5-flash-lite",
+    "gemini-flash-lite-latest",
+    "gemini-3.5-flash",
+    "gemini-3.6-flash",
+    "gemini-3-flash-preview",
     "gemini-3.8-flash",
-    "gemini-2.0-flash-lite",
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-001",
 )
-GEMINI_CLIENT_API_VERSIONS = ("v1beta", "v1", None)
+GEMINI_CLIENT_API_VERSIONS = ("v1beta",)
 GEMINI_CLOUD_MODELS = (
+    "gemini-3.1-flash-lite",
+    "gemini-3.5-flash-lite",
+    "gemini-flash-lite-latest",
+    "gemini-3.5-flash",
+    "gemini-3.6-flash",
+    "gemini-3-flash-preview",
     "gemini-3.8-flash",
-    "gemini-2.0-flash-lite",
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-001",
 )
-GEMINI_CLOUD_API_VERSIONS = ("v1beta", "v1")
-GEMINI_CLOUD_REQUEST_TIMEOUT_SEC = 45
-GEMINI_CLOUD_TOTAL_TIMEOUT_SEC = 75
-GEMINI_CLOUD_MAX_TEXT_CHARS = 1200
+GEMINI_CLOUD_API_VERSIONS = ("v1beta",)
+GEMINI_CLOUD_REQUEST_TIMEOUT_SEC = 25
+GEMINI_CLOUD_TOTAL_TIMEOUT_SEC = 32
+GEMINI_CLOUD_MAX_TEXT_CHARS = 750
+GEMINI_MAX_MODEL_ATTEMPTS = 3
+LITERARY_MIN_CHARS = 220
 
 
 class GeminiConnectionTimeout(Exception):
@@ -257,11 +280,12 @@ def _gemini_model_id_variants(model: object) -> list[str]:
     return variants
 
 
-def _gemini_insight_model_ids(client, profile: dict) -> list[str]:
-    if not profile["discover_models"]:
-        return list(profile["model_preferences"])
-
-    preferences = profile["model_preferences"]
+@st.cache_resource(show_spinner=False)
+def _gemini_discovered_model_ids(api_version: str | None) -> tuple[str, ...]:
+    opts: dict = {"timeout": 20_000}
+    if api_version:
+        opts["api_version"] = api_version
+    client = genai.Client(api_key=_gemini_api_key(), http_options=opts)
     discovered: list[str] = []
     try:
         for model in client.models.list():
@@ -287,18 +311,62 @@ def _gemini_insight_model_ids(client, profile: dict) -> list[str]:
                 if model_id not in discovered:
                     discovered.append(model_id)
     except Exception:
-        pass
+        return tuple()
+    return tuple(discovered)
 
-    if discovered:
-        ordered: list[str] = []
-        for preferred in preferences:
-            if preferred in discovered and preferred not in ordered:
+
+def _gemini_insight_model_ids(client, profile: dict) -> list[str]:
+    preferences = list(profile["model_preferences"])
+    if not profile["discover_models"]:
+        return preferences[:GEMINI_MAX_MODEL_ATTEMPTS]
+
+    api_version = None
+    try:
+        api_version = getattr(
+            getattr(client, "_api_client", None), "api_version", None
+        )
+    except Exception:
+        api_version = None
+    discovered = [
+        mid
+        for mid in _gemini_discovered_model_ids(api_version)
+        if "gemini-2.0" not in mid.lower()
+    ]
+    # Prefer known-good AQ / 3.x flash-lite IDs first, even before discovery order.
+    ordered: list[str] = []
+    for preferred in preferences:
+        if preferred not in ordered:
+            if (not discovered) or preferred in discovered:
                 ordered.append(preferred)
-        for model_id in discovered:
-            if model_id not in ordered:
-                ordered.append(model_id)
-        return ordered
-    return list(preferences)
+        if len(ordered) >= GEMINI_MAX_MODEL_ATTEMPTS:
+            return ordered
+    for model_id in discovered:
+        low = model_id.lower()
+        if model_id in ordered:
+            continue
+        # Skip slow/heavy preview/pro variants when we already have lite options.
+        if any(token in low for token in ("-pro", "argon", "carbon", "hydrogen", "omni", "transcribe", "nano-banana")):
+            continue
+        ordered.append(model_id)
+        if len(ordered) >= GEMINI_MAX_MODEL_ATTEMPTS:
+            break
+    return ordered[:GEMINI_MAX_MODEL_ATTEMPTS] or preferences[:GEMINI_MAX_MODEL_ATTEMPTS]
+
+
+def _gemini_metin_ozeti(metin: str, max_chars: int) -> str:
+    temiz = metin.strip()
+    if len(temiz) <= max_chars:
+        return temiz
+    # Keep opening + closing so long essays still carry arc / punchline.
+    bas = max(220, int(max_chars * 0.62))
+    son = max(120, max_chars - bas - 40)
+    if bas + son >= len(temiz):
+        return temiz[:max_chars]
+    return (
+        f"{temiz[:bas].rstrip()}\n\n"
+        f"[…middle omitted for length…]\n\n"
+        f"{temiz[-son:].lstrip()}"
+    )
 
 
 EMOTION_LABELS_EN = {
@@ -402,17 +470,174 @@ EMOTION_LABELS_BY_LANG: dict[str, dict[str, str]] = {
 
 GOOGLE_EN = "en"
 
+# Site footer keeps Seneca; analysis panel picks another voice at random.
+SITE_MOTTO = (
+    "“The mind that is free from disturbance is the true wealth.”",
+    "— Seneca, Moral Letters to Lucilius",
+)
+PHILOSOPHER_QUOTES: tuple[tuple[str, str], ...] = (
+    SITE_MOTTO,
+    (
+        "“The unexamined life is not worth living.”",
+        "— Socrates, via Plato’s Apology",
+    ),
+    (
+        "“We are what we repeatedly do. Excellence, then, is not an act but a habit.”",
+        "— Aristotle (commonly attributed)",
+    ),
+    (
+        "“He who has a why to live can bear almost any how.”",
+        "— Friedrich Nietzsche",
+    ),
+    (
+        "“Man is condemned to be free.”",
+        "— Jean-Paul Sartre",
+    ),
+    (
+        "“In the depth of winter, I finally learned that within me there lay an invincible summer.”",
+        "— Albert Camus",
+    ),
+    (
+        "“The limits of my language mean the limits of my world.”",
+        "— Ludwig Wittgenstein",
+    ),
+    (
+        "“One cannot step twice into the same river.”",
+        "— Heraclitus",
+    ),
+    (
+        "“I think, therefore I am.”",
+        "— René Descartes",
+    ),
+    (
+        "“Happiness is not an ideal of reason but of imagination.”",
+        "— Immanuel Kant",
+    ),
+    (
+        "“The life of man [is] solitary, poor, nasty, brutish, and short.”",
+        "— Thomas Hobbes",
+    ),
+    (
+        "“God is dead. God remains dead. And we have killed him.”",
+        "— Friedrich Nietzsche",
+    ),
+    (
+        "“To be is to be perceived.”",
+        "— George Berkeley",
+    ),
+    (
+        "“Entities should not be multiplied beyond necessity.”",
+        "— William of Ockham (commonly attributed)",
+    ),
+    (
+        "“The owl of Minerva spreads its wings only with the falling of the dusk.”",
+        "— G. W. F. Hegel",
+    ),
+    (
+        "“Whereof one cannot speak, thereof one must be silent.”",
+        "— Ludwig Wittgenstein",
+    ),
+    (
+        "“Hell is other people.”",
+        "— Jean-Paul Sartre",
+    ),
+    (
+        "“There is nothing either good or bad, but thinking makes it so.”",
+        "— William Shakespeare (Hamlet)",
+    ),
+    (
+        "“Know thyself.”",
+        "— Delphic maxim",
+    ),
+    (
+        "“The only true wisdom is in knowing you know nothing.”",
+        "— Socrates (commonly attributed)",
+    ),
+    (
+        "“Man is born free, and everywhere he is in chains.”",
+        "— Jean-Jacques Rousseau",
+    ),
+    (
+        "“That which does not kill us makes us stronger.”",
+        "— Friedrich Nietzsche",
+    ),
+    (
+        "“We live in the best of all possible worlds.”",
+        "— Gottfried Wilhelm Leibniz (paraphrased)",
+    ),
+    (
+        "“Existence precedes essence.”",
+        "— Jean-Paul Sartre",
+    ),
+    (
+        "“The medium is the message.”",
+        "— Marshall McLuhan",
+    ),
+    (
+        "“All that is solid melts into air.”",
+        "— Karl Marx & Friedrich Engels",
+    ),
+    (
+        "“Time is a created thing. To say ‘I don’t have time’ is to say ‘I don’t want to.’”",
+        "— Lao Tzu (commonly attributed)",
+    ),
+    (
+        "“The map is not the territory.”",
+        "— Alfred Korzybski",
+    ),
+    (
+        "“One must imagine Sisyphus happy.”",
+        "— Albert Camus",
+    ),
+    (
+        "“Freedom is what you do with what’s been done to you.”",
+        "— Jean-Paul Sartre (commonly attributed)",
+    ),
+    (
+        "“Doubt is not a pleasant condition, but certainty is absurd.”",
+        "— Voltaire",
+    ),
+    (
+        "“We are asleep. Our Life is a dream. But we wake up sometimes, just enough to know that we are dreaming.”",
+        "— Ludwig Wittgenstein",
+    ),
+)
+
+
+def rastgele_analiz_sozu() -> tuple[str, str]:
+    """Quote for the results panel; never repeats the fixed site motto."""
+    adaylar = [q for q in PHILOSOPHER_QUOTES if q != SITE_MOTTO]
+    return random.choice(adaylar)
+
+
 UI_EN = {
     "page_title": "Semantic & Philosophical Text Analyzer",
-    "kicker": "Scholarly text review",
+    "kicker": "Philosophy",
     "title": "Semantic & Philosophical Text Analyzer",
     "info_title": "About this analyzer",
     "text_to_analyze": "Text to analyze",
     "analysis_language": "Analysis language",
     "results_language": "Results language",
-    "placeholder": "Paste a passage in any language…",
-    "analyze_button": "Analyze Text",
+    "placeholder": (
+        "Paste a passage in any language… "
+        "(about 100+ characters for philosophical insight)"
+    ),
+    "analyze_button": "Analyze",
     "warning_empty": "Paste a passage before running the analysis.",
+    "warning_too_short": (
+        "This text is short for deep analysis. Emotion spectrum still runs; "
+        "add roughly {min_chars}+ characters for a philosophical insight."
+    ),
+    "input_hint": (
+        "Reveals the conceptual structure, emotional temper, and "
+        "philosophical undertow of a text."
+    ),
+    "char_count": "{n} characters",
+    "results_label": "Results: Emotion spectrum",
+    "motto": SITE_MOTTO[0],
+    "motto_attr": SITE_MOTTO[1],
+    "insight_kicker": "Philosophical reading",
+
     "spinner": "Translating and mapping emotional tone…",
     "status_detect": "Detecting source language…",
     "status_translate": "Translating to English for the model…",
@@ -420,6 +645,7 @@ UI_EN = {
     "status_score": "Scoring emotional tone…",
     "status_emotions_done": "Emotion analysis complete",
     "spinner_insight": "Generating philosophical insight (Gemini)…",
+    "spinner_emotions": "Scoring emotional tone…",
     "error_prefix": "Analysis could not be completed:",
     "emotion": "Emotion",
     "intensity": "Intensity",
@@ -441,16 +667,18 @@ UI_EN = {
         "rather than a perfect map of the source language's feeling-vocabulary."
     ),
     "methodology_points": (
-        "For scoring, your text may be translated into English; results can "
-        "reflect that bridge as much as the original voice.",
-        "Metaphor, tone, and wordplay often flatten in translation, which can "
-        "skew or dull emotional signal.",
-        "Only a limited span of the bridge is scored at once; very long "
-        "passages are read in several averaged windows.",
+        "Very short texts receive emotion labels only; philosophical insight "
+        "needs a longer passage so the model does not over-read ordinary lines.",
+        "On longer passages, emotions and insight share one Gemini pass on the "
+        "original wording (tone and subtext); RoBERTa remains the fallback.",
+        "Neutrality is softened unless the line is a true greeting; affective "
+        "labels are preferred when any clear mood is present.",
+        "For scoring fallback, non-English text may be translated into English; "
+        "that bridge can still shift cultural feeling-vocabulary.",
+        "Long RoBERTa fallbacks use peak-weighted windows so strong local tone "
+        "is not washed out by flat stretches.",
         "Bar lengths show relative share among the top three labels, not "
         "independent probabilities that sum to 100%.",
-        "Where irony, negated feeling, or layered subtext is clear, analysis "
-        "may lean on the original wording more than on a literal bridge.",
     ),
     "model_loading": "Loading emotion classifier…",
     "insight_title": "Semantic & Philosophical Insight",
@@ -558,28 +786,46 @@ def guvenli_cevir(metin: str, kaynak: str, hedef: str) -> str:
 
     google_src = "auto" if kaynak == "auto" else kaynak
     google_tgt = GOOGLE_EN if hedef.startswith("en") else hedef
+    # Cap outbound translation wait so Analyze never spins forever.
+    ceviri_timeout = 12
 
     google_hata: str | None = None
     try:
-        sonuc = GoogleTranslator(source=google_src, target=google_tgt).translate(temiz)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            sonuc = pool.submit(
+                GoogleTranslator(source=google_src, target=google_tgt).translate,
+                temiz,
+            ).result(timeout=ceviri_timeout)
         if sonuc and sonuc.strip():
             return sonuc.strip()
+    except FuturesTimeoutError:
+        google_hata = "timeout"
     except Exception as exc:
         google_hata = str(exc)
 
     mymemory_hata: str | None = None
     try:
-        sonuc = mymemory_translate(temiz, kaynak, hedef)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            sonuc = pool.submit(
+                mymemory_translate, temiz, kaynak, hedef
+            ).result(timeout=ceviri_timeout)
         if sonuc:
             return sonuc
+    except FuturesTimeoutError:
+        mymemory_hata = "timeout"
     except Exception as exc:
         mymemory_hata = str(exc)
 
     gtx_hata: str | None = None
     try:
-        sonuc = gtx_translate(temiz, kaynak, hedef)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            sonuc = pool.submit(
+                gtx_translate, temiz, kaynak, hedef
+            ).result(timeout=ceviri_timeout)
         if sonuc:
             return sonuc
+    except FuturesTimeoutError:
+        gtx_hata = "timeout"
     except Exception as exc:
         gtx_hata = str(exc)
 
@@ -601,88 +847,112 @@ def load_emotion_classifier():
 
 
 def _gemini_generate_text(prompt: str) -> str:
+    """Call Gemini on the main thread; rely on HTTP timeouts (no nested pools)."""
     profile = _gemini_insight_profile()
+    last_exc: Exception | None = None
+    saw_not_found = False
+    for client in _gemini_insight_clients(profile):
+        model_ids = _gemini_insight_model_ids(client, profile)
+        for model_id in model_ids:
+            try:
+                yanit = client.models.generate_content(
+                    model=model_id,
+                    contents=prompt,
+                )
+            except Exception as exc:
+                exc_name = type(exc).__name__.lower()
+                last_exc = exc
+                if _gemini_model_not_found(exc):
+                    saw_not_found = True
+                    continue
+                if (
+                    "timeout" in exc_name
+                    or "timed out" in str(exc).lower()
+                    or _gemini_deadline(exc)
+                    or _gemini_retryable(exc)
+                ):
+                    continue
+                raise
+            metin_yanit = (yanit.text or "").strip()
+            if not metin_yanit:
+                raise RuntimeError("Gemini returned empty insight text.")
+            return metin_yanit
+    if last_exc and (
+        _gemini_deadline(last_exc)
+        or "timed out" in str(last_exc).lower()
+        or "timeout" in type(last_exc).__name__.lower()
+    ):
+        raise GeminiConnectionTimeout from last_exc
+    if saw_not_found and last_exc:
+        raise RuntimeError(
+            "Bu API anahtarı için generateContent destekleyen uygun bir "
+            "Gemini modeli bulunamadı (404). Streamlit Cloud → Secrets "
+            "içindeki GEMINI_API_KEY değerinin, localhost’taki "
+            "secrets.toml ile birebir aynı AQ… veya AIza… anahtarı "
+            "olduğundan emin ol (boşluk/tırnak yok)."
+        ) from last_exc
+    if last_exc and _gemini_retryable(last_exc):
+        raise GeminiServiceUnavailable from last_exc
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("Gemini insight çağrısı yapılandırılamadı.")
 
-    def _generate() -> str:
-        last_exc: Exception | None = None
-        saw_not_found = False
-        for client in _gemini_insight_clients(profile):
-            model_ids = _gemini_insight_model_ids(client, profile)
-            for model_id in model_ids:
-                try:
-                    yanit = client.models.generate_content(
-                        model=model_id,
-                        contents=prompt,
-                    )
-                except Exception as exc:
-                    exc_name = type(exc).__name__.lower()
-                    last_exc = exc
-                    if _gemini_model_not_found(exc):
-                        saw_not_found = True
-                        continue
-                    if (
-                        "timeout" in exc_name
-                        or "timed out" in str(exc).lower()
-                        or _gemini_deadline(exc)
-                        or _gemini_retryable(exc)
-                    ):
-                        continue
-                    raise
-                metin_yanit = (yanit.text or "").strip()
-                if not metin_yanit:
-                    raise RuntimeError("Gemini returned empty insight text.")
-                return metin_yanit
-        if last_exc and (
-            _gemini_deadline(last_exc)
-            or "timed out" in str(last_exc).lower()
-            or "timeout" in type(last_exc).__name__.lower()
-        ):
-            raise GeminiConnectionTimeout from last_exc
-        if saw_not_found and last_exc:
-            raise RuntimeError(
-                "Bu API anahtarı için generateContent destekleyen uygun bir "
-                "Gemini modeli bulunamadı (404). Streamlit Cloud → Secrets "
-                "içindeki GEMINI_API_KEY değerinin, localhost’taki "
-                "secrets.toml ile birebir aynı AQ… veya AIza… anahtarı "
-                "olduğundan emin ol (boşluk/tırnak yok)."
-            ) from last_exc
-        if last_exc and _gemini_retryable(last_exc):
-            raise GeminiServiceUnavailable from last_exc
-        if last_exc:
-            raise last_exc
-        raise RuntimeError("Gemini insight çağrısı yapılandırılamadı.")
 
+def _gemini_insight_prompt(metin_ozet: str, output_lang: str) -> str:
+    lang_name = gemini_output_language_name(output_lang)
+    return (
+        f"{GEMINI_INSIGHT_PROMPT}\n"
+        f"Please provide the entire analysis and response strictly in {lang_name}.\n\n"
+        f"Text:\n{metin_ozet}"
+    )
+
+
+def _gemini_with_length_fallback(
+    metin: str, output_lang: str, prompt_builder
+) -> str:
+    profile = _gemini_insight_profile()
+    limit = profile["max_text_chars"]
+    if len(metin.strip()) > profile["max_text_chars"] * 1.4:
+        # Long texts: try compact excerpt first to avoid 504.
+        limit = min(limit, GEMINI_INSIGHT_RETRY_CHARS + 150)
+    ozet = _gemini_metin_ozeti(metin, limit)
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(_generate).result(
-                timeout=profile["total_timeout_sec"]
-            )
-    except concurrent.futures.TimeoutError as exc:
-        raise GeminiConnectionTimeout from exc
+        return _gemini_generate_text(prompt_builder(ozet, output_lang))
+    except (GeminiConnectionTimeout, GeminiServiceUnavailable):
+        if limit <= GEMINI_INSIGHT_RETRY_CHARS:
+            raise
+        kisa = _gemini_metin_ozeti(metin, GEMINI_INSIGHT_RETRY_CHARS)
+        return _gemini_generate_text(prompt_builder(kisa, output_lang))
 
 
 def gemini_philosophical_insight(metin: str, output_lang: str) -> str:
     temiz = metin.strip()
     if not temiz:
         return ""
-    profile = _gemini_insight_profile()
-    metin_ozet = temiz[: profile["max_text_chars"]]
-    lang_name = gemini_output_language_name(output_lang)
-    prompt = (
-        f"{GEMINI_INSIGHT_PROMPT}\n"
-        f"Please provide the entire analysis and response strictly in {lang_name}.\n\n"
-        f"Text:\n{metin_ozet}"
+    return _gemini_with_length_fallback(
+        temiz, output_lang, _gemini_insight_prompt
     )
-    return _gemini_generate_text(prompt)
 
 
-def _katmanli_edebi_metin(metin: str) -> bool:
+def _metin_derin_analiz_uygun(metin: str) -> bool:
+    """Skip Gemini insight / literary path on thin or phatic inputs."""
     temiz = metin.strip()
     if not temiz:
         return False
-    kelime = len(temiz.split())
-    if kelime < 10:
+    if len(temiz) < MIN_CHARS_DEEP:
         return False
+    if len(temiz.split()) < MIN_WORDS_DEEP:
+        return False
+    return True
+
+
+def _katmanli_edebi_metin(metin: str) -> bool:
+    if not _metin_derin_analiz_uygun(metin):
+        return False
+    temiz = metin.strip()
+    if len(temiz) < LITERARY_MIN_CHARS:
+        return False
+    kelime = len(temiz.split())
     if EDISI_DUYGU_INKAR.search(temiz) or EDISI_BEKLENEN_DUYGU.search(temiz):
         return True
     if kelime >= LITERARY_MIN_WORDS and (
@@ -730,36 +1000,51 @@ def _parse_gemini_analysis_json(ham: str) -> tuple[list[dict], str]:
     return duygular[:3], insight
 
 
-def gemini_edebi_birlesik(
-    metin: str, output_lang: str
-) -> tuple[list[dict], str]:
-    temiz = metin.strip()
-    if not temiz:
-        return [], ""
-    profile = _gemini_insight_profile()
-    metin_ozet = temiz[: profile["max_text_chars"]]
+def _gemini_birlesik_prompt(metin_ozet: str, output_lang: str) -> str:
     lang_name = gemini_output_language_name(output_lang)
     etiketler = ", ".join(sorted(EMOTION_LABELS_EN.keys()))
-    prompt = (
+    return (
         "Analyze the following text in its original language—including "
-        "literature, poetry, irony, and philosophical prose.\n\n"
+        "everyday prose, literature, poetry, irony, and philosophical writing.\n\n"
         f"{GEMINI_INSIGHT_PROMPT}\n"
         f"Write the insight field strictly in {lang_name}.\n\n"
-        "For emotions, score the narrator's lived tone and subtext, not plot "
-        "keywords alone. When the speaker reports numbness, estrangement, or "
-        "not feeling expected grief, prefer neutral, realization, confusion, "
-        "or disappointment over sadness/grief driven only by events.\n\n"
+        "For emotions, score the speaker's or narrator's lived tone and "
+        "subtext—not plot keywords alone. Prefer affective labels "
+        "(joy, sadness, anger, fear, love, admiration, curiosity, etc.) "
+        "when any clear mood is present. Use neutral only when the text is "
+        "truly flat or informational. When the speaker reports numbness, "
+        "estrangement, or not feeling expected grief, prefer realization, "
+        "confusion, disappointment, or neutral over grief driven only by "
+        "events.\n\n"
         "Return exactly three salient Go Emotions labels with confidence "
         f"scores between 0 and 1 (independent). Allowed labels: {etiketler}\n\n"
         "Respond with ONLY valid JSON (no markdown):\n"
-        '{"emotions": [{"label": "realization", "score": 0.55}, '
-        '{"label": "neutral", "score": 0.30}, {"label": "confusion", "score": 0.15}], '
+        '{"emotions": [{"label": "joy", "score": 0.55}, '
+        '{"label": "optimism", "score": 0.30}, {"label": "love", "score": 0.15}], '
         f'"insight": "..."}}\n\n'
         f"Text:\n{metin_ozet}"
     )
-    ham = _gemini_generate_text(prompt)
+
+
+def gemini_birlesik_analiz(
+    metin: str, output_lang: str
+) -> tuple[list[dict], str]:
+    """Single Gemini pass: top-3 emotions + philosophical insight."""
+    temiz = metin.strip()
+    if not temiz:
+        return [], ""
+    ham = _gemini_with_length_fallback(
+        temiz, output_lang, _gemini_birlesik_prompt
+    )
     duygular, insight = _parse_gemini_analysis_json(ham)
-    return ust_uc_gemini(duygular), insight
+    return ust_uc_duzenle(duygular, temiz), insight
+
+
+def gemini_edebi_birlesik(
+    metin: str, output_lang: str
+) -> tuple[list[dict], str]:
+    """Backward-compatible alias for unified deep analysis."""
+    return gemini_birlesik_analiz(metin, output_lang)
 
 
 def insight_in_source_language(insight_en: str, source_lang: str) -> str:
@@ -818,47 +1103,28 @@ def _gosterim_uctus_normallestir(secilen: list[dict]) -> list[dict]:
     ]
 
 
-def ust_uc_duzenle(skorlar: list[dict], metin: str = "") -> list[dict]:
-    """Pick top-3 labels; normalize bars; neutral only leads on short phatic text."""
-    sirali = sorted(skorlar, key=lambda x: x["score"], reverse=True)
-    if not sirali:
-        return []
-    kelime = len(metin.split())
-    not_notr = [
-        s for s in sirali if s["label"].strip().lower() != "neutral"
-    ]
-    en_yuksek_notr = not_notr[0]["score"] if not_notr else 0.0
-    neutral = next(
-        (s for s in sirali if s["label"].strip().lower() == "neutral"), None
+def _phatic_metin(metin: str) -> bool:
+    temiz = " ".join(metin.strip().split())
+    if not temiz:
+        return False
+    if len(temiz.split()) > PHATIC_MAX_WORDS:
+        return False
+    if PHATIC_KALIP.match(temiz):
+        return True
+    # Soft phatic: very short greeting-like openers.
+    return bool(
+        re.match(
+            r"^(hi|hello|hey|merhaba|selam)\b",
+            temiz,
+            re.IGNORECASE,
+        )
+        and len(temiz.split()) <= 6
     )
 
-    if (
-        kelime <= PHATIC_MAX_WORDS
-        and neutral
-        and sirali[0]["label"].strip().lower() == "neutral"
-    ):
-        ikinci = sirali[1]["score"] if len(sirali) > 1 else 0.0
-        if ikinci < 0.40 or neutral["score"] - ikinci >= 0.15:
-            return _gosterim_uctus_normallestir(sirali)
 
-    if kelime > PHATIC_MAX_WORDS and en_yuksek_notr >= SALIENT_EMOTION_MIN:
-        if len(not_notr) >= 3:
-            return _gosterim_uctus_normallestir(not_notr)
-        secilen: list[dict] = []
-        for kayit in not_notr + sirali:
-            if kayit in secilen:
-                continue
-            secilen.append(kayit)
-            if len(secilen) == 3:
-                break
-        return _gosterim_uctus_normallestir(secilen)
-
-    if en_yuksek_notr < 0.40:
-        return _gosterim_uctus_normallestir(sirali)
-
-    if len(not_notr) >= 3:
-        return _gosterim_uctus_normallestir(not_notr)
-    secilen = []
+def _top3_notr_sonra(not_notr: list[dict], sirali: list[dict]) -> list[dict]:
+    """Prefer non-neutral first; keep neutral in top-3 if needed for fill."""
+    secilen: list[dict] = []
     for kayit in not_notr + sirali:
         if kayit in secilen:
             continue
@@ -866,6 +1132,40 @@ def ust_uc_duzenle(skorlar: list[dict], metin: str = "") -> list[dict]:
         if len(secilen) == 3:
             break
     return _gosterim_uctus_normallestir(secilen)
+
+
+def ust_uc_duzenle(skorlar: list[dict], metin: str = "") -> list[dict]:
+    """Pick top-3; soften neutral dominance except true phatic greetings."""
+    sirali = sorted(skorlar, key=lambda x: x["score"], reverse=True)
+    if not sirali:
+        return []
+    not_notr = [
+        s for s in sirali if s["label"].strip().lower() != "neutral"
+    ]
+    en_yuksek_notr = not_notr[0]["score"] if not_notr else 0.0
+    neutral = next(
+        (s for s in sirali if s["label"].strip().lower() == "neutral"), None
+    )
+    birinci_notr = sirali[0]["label"].strip().lower() == "neutral"
+    phatic = _phatic_metin(metin)
+
+    if phatic and birinci_notr and neutral:
+        # Keep neutrality for greetings unless a challenger is clearly strong.
+        if en_yuksek_notr >= PHATIC_CHALLENGER_MIN:
+            return _top3_notr_sonra(not_notr, sirali)
+        return _gosterim_uctus_normallestir(sirali)
+
+    if birinci_notr and en_yuksek_notr >= NEUTRAL_CHALLENGER_MIN:
+        # Soft C: neutral may remain in the table, but not as dominant.
+        return _top3_notr_sonra(not_notr, sirali)
+
+    if en_yuksek_notr >= SALIENT_EMOTION_MIN and len(not_notr) >= 3:
+        return _gosterim_uctus_normallestir(not_notr[:3])
+
+    if en_yuksek_notr >= SALIENT_EMOTION_MIN:
+        return _top3_notr_sonra(not_notr, sirali)
+
+    return _gosterim_uctus_normallestir(sirali[:3])
 
 
 def duygu_tablosu_html(ust_uc: list[dict], source_lang: str) -> str:
@@ -877,7 +1177,6 @@ def duygu_tablosu_html(ust_uc: list[dict], source_lang: str) -> str:
         genislik = min(100.0, max(0.0, yuzde))
         satirlar.append(
             f'<div class="emotion-row">'
-            f'<span class="emotion-rank">{i}</span>'
             f'<span class="emotion-name">{ad}</span>'
             f'<div class="emotion-bar-track" aria-hidden="true">'
             f'<div class="emotion-bar-fill rank-{i}" style="width: {genislik:.1f}%;"></div>'
@@ -885,24 +1184,75 @@ def duygu_tablosu_html(ust_uc: list[dict], source_lang: str) -> str:
             f'<span class="emotion-pct">{yuzde:.1f}%</span>'
             f"</div>"
         )
+    return '<div class="emotion-table">' + "".join(satirlar) + "</div>"
+
+
+def _sprig_svg(css_class: str = "panel-sprig") -> str:
     return (
-        '<div class="emotion-table">'
-        '<div class="emotion-head">'
-        f"<span></span><span>{UI_EN['emotion']}</span>"
-        f"<span>{UI_EN['intensity']}</span><span>{UI_EN['score']}</span>"
-        "</div>"
-        + "".join(satirlar)
-        + "</div>"
+        f'<svg class="{css_class}" viewBox="0 0 64 64" aria-hidden="true">'
+        '<path d="M32 58 C32 40 18 32 12 18 C22 20 30 28 32 40 '
+        'C34 28 42 20 52 18 C46 32 32 40 32 58 Z" '
+        'fill="none" stroke="currentColor" stroke-width="1.4"/>'
+        '<path d="M32 58 V28" fill="none" stroke="currentColor" '
+        'stroke-width="1.2"/>'
+        "</svg>"
     )
 
 
-def sonuc_paneli_html(baskın: str, tablo: str) -> str:
+def sonuc_paneli_html(
+    baskın: str, tablo: str, soz: str, soz_kaynak: str
+) -> str:
     return (
         f'<div class="result-panel">'
-        f'<p class="result-heading">{UI_EN["result_heading"]}</p>'
-        f'<p class="dominant-emotion">{UI_EN["dominant"]}: {baskın}</p>'
-        f"{tablo}"
+        f'<p class="results-kicker">{UI_EN["results_label"]}</p>'
+        f'<div class="result-top">'
+        f'<div class="dominant-block">'
+        f'<p class="dominant-label">{UI_EN["dominant"]}</p>'
+        f'<p class="dominant-emotion">{baskın}</p>'
         f"</div>"
+        f'<div class="spectrum-block">{tablo}</div>'
+        f"</div>"
+        f'<div class="result-foot">'
+        f'<div class="motto-block">'
+        f'<p class="motto">{soz}</p>'
+        f'<p class="motto-attr">{soz_kaynak}</p>'
+        f"</div>"
+        f"{_sprig_svg()}"
+        f"</div>"
+        f"</div>"
+    )
+
+
+def insight_paneli_html(metin: str) -> str:
+    temiz = (metin or "").strip()
+    if not temiz:
+        return ""
+    # Escape minimal HTML risk from model output while keeping paragraphs.
+    guvenli = (
+        temiz.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+    paragraflar = [
+        f"<p>{p.strip()}</p>"
+        for p in re.split(r"\n\s*\n", guvenli)
+        if p.strip()
+    ]
+    if not paragraflar:
+        paragraflar = [f"<p>{guvenli}</p>"]
+    return (
+        f'<article class="insight-panel">'
+        f'<div class="insight-head">'
+        f'<h2 class="insight-title">{UI_EN["insight_title"]}</h2>'
+        f"{_sprig_svg('insight-sprig')}"
+        f"</div>"
+        f'<div class="insight-ornament" aria-hidden="true">'
+        f'<span class="insight-ornament-line"></span>'
+        f'<span class="insight-ornament-dot"></span>'
+        f'<span class="insight-ornament-line"></span>'
+        f"</div>"
+        f'<div class="insight-body">{"".join(paragraflar)}</div>'
+        f"</article>"
     )
 
 
@@ -936,15 +1286,31 @@ def _roberta_parcalari(metin: str) -> list[str]:
 
 
 def _roberta_skorlari_birlestir(parcalar_skor: list[list[dict]]) -> list[dict]:
-    biriken: dict[str, list[float]] = {}
-    for skorlar in parcalar_skor:
-        for kayit in skorlar:
-            etiket = kayit["label"]
-            biriken.setdefault(etiket, []).append(float(kayit["score"]))
-    birlesik = [
-        {"label": etiket, "score": sum(degerler) / len(degerler)}
-        for etiket, degerler in biriken.items()
-    ]
+    """Peak-weighted merge: emphatic chunks outweigh flat/neutral averages."""
+    if not parcalar_skor:
+        return []
+    etiketler = {kayit["label"] for skorlar in parcalar_skor for kayit in skorlar}
+    birlesik: list[dict] = []
+    for etiket in etiketler:
+        degerler: list[float] = []
+        for skorlar in parcalar_skor:
+            skor = next(
+                (
+                    float(k["score"])
+                    for k in skorlar
+                    if k["label"] == etiket
+                ),
+                0.0,
+            )
+            degerler.append(skor)
+        if not degerler:
+            continue
+        ortalama = sum(degerler) / len(degerler)
+        zirve = max(degerler)
+        # Soft peak blend: keep presence of strong local emotion.
+        birlesik.append(
+            {"label": etiket, "score": 0.45 * ortalama + 0.55 * zirve}
+        )
     birlesik.sort(key=lambda x: x["score"], reverse=True)
     return birlesik
 
@@ -995,8 +1361,8 @@ def _insight_hata_mesaji(exc: Exception) -> tuple[str, str] | None:
         return (
             "error",
             "Bağlantı zaman aşımına uğradı (504). Duygu analizi tamam; "
-            "felsefi özet gelmedi. Daha kısa metin deneyin veya biraz "
-            "sonra tekrar Analyze Text’e basın.",
+            "felsefi özet için metnin daha kısa bir özeti deneniyor veya "
+            "biraz sonra tekrar Analyze Text’e basın.",
         )
     if isinstance(exc, GeminiServiceUnavailable):
         return (
@@ -1040,229 +1406,450 @@ def methodology_dialog():
 st.markdown(
     """
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Source+Sans+3:wght@400;500;600&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
 
-        html, body, [data-testid="stAppViewContainer"], [data-testid="stHeader"] {
-            background-color: #0f1216;
-            color: #e8e4dc;
+        :root {
+            --ink: #f3eee6;
+            --muted: #a39e94;
+            --quiet: #757068;
+            --canvas: #07090c;
+            --surface: #12161c;
+            --surface-2: #181e26;
+            --line: #343c48;
+            --teal: #3d9b8f;
+            --teal-deep: #1f6f67;
+            --copper: #c9a66b;
+            --serif: "Libre Baskerville", Georgia, serif;
+            --sans: "IBM Plex Sans", "Source Sans 3", sans-serif;
+        }
+
+        #MainMenu, footer, [data-testid="stToolbar"], [data-testid="stDecoration"] {
+            display: none !important;
+            visibility: hidden !important;
+        }
+
+        html, body, [data-testid="stAppViewContainer"] {
+            background:
+                radial-gradient(ellipse 50% 32% at 8% 0%, rgba(61, 155, 143, 0.07) 0%, transparent 55%),
+                linear-gradient(180deg, #0f1419 0%, var(--canvas) 45%, #06080a 100%) !important;
+            color: var(--ink);
         }
 
         [data-testid="stHeader"] {
-            background: rgba(15, 18, 22, 0.85);
+            background: transparent;
         }
 
         .block-container {
-            max-width: 920px;
-            padding-top: 3.2rem;
-            padding-bottom: 4rem;
+            max-width: 760px;
+            padding-top: 2.2rem;
+            padding-bottom: 3.5rem;
         }
 
         .masthead {
-            border-bottom: 1px solid #2c313a;
-            padding-bottom: 1.4rem;
-            margin-bottom: 1.8rem;
+            border-bottom: none;
+            padding-bottom: 0.4rem;
+            margin-bottom: 1.1rem;
+            animation: mast-in 0.5s ease-out both;
+        }
+
+        @keyframes mast-in {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes panel-in {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
         }
 
         .kicker {
-            font-family: "Source Sans 3", sans-serif;
-            letter-spacing: 0.22em;
+            display: inline-block;
+            font-family: var(--sans);
+            letter-spacing: 0.18em;
             text-transform: uppercase;
-            font-size: 0.72rem;
-            color: #b9a27a;
-            margin: 0 0 0.55rem 0;
+            font-size: 0.68rem;
+            font-weight: 500;
+            color: var(--copper);
+            background: rgba(201, 166, 107, 0.08);
+            padding: 0.28rem 0.62rem;
+            border: 1px solid rgba(201, 166, 107, 0.28);
+            border-radius: 3px;
+            margin: 0 0 1rem 0;
         }
 
         h1.app-title {
-            font-family: "Cormorant Garamond", Georgia, serif;
-            font-weight: 600;
-            font-size: 2.7rem;
-            line-height: 1.15;
-            color: #f4f0e8;
+            font-family: var(--serif);
+            font-weight: 700;
+            font-size: clamp(2.55rem, 5.4vw, 3.45rem);
+            line-height: 1.08;
+            color: #faf6ef;
             margin: 0;
+            max-width: 13ch;
         }
 
         .lede {
-            font-family: "Source Sans 3", sans-serif;
-            color: #a8a39a;
-            font-size: 1.02rem;
-            margin: 0.75rem 0 0 0;
-            max-width: 48rem;
+            font-family: var(--sans);
+            color: var(--muted);
+            font-size: 1.05rem;
+            margin: 1.05rem 0 0 0;
+            max-width: 34rem;
+            line-height: 1.6;
         }
+
+        .stage-shell {
+            margin: 1.35rem 0 0.35rem 0;
+            padding: 1.1rem 1.15rem 0.45rem 1.15rem;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: rgba(18, 22, 28, 0.72);
+            box-shadow: none;
+        }
+
+        .stage-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 0.85rem;
+        }
+
+        .stage-label {
+            font-family: var(--sans);
+            font-size: 0.68rem;
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+            color: var(--quiet);
+            margin: 0;
+        }
+
+        .char-meter {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 1rem;
+            margin: 0.15rem 0 0.85rem 0;
+            font-family: var(--sans);
+            font-size: 0.76rem;
+            color: var(--quiet);
+        }
+
+        .char-meter .ready { color: var(--teal); }
+        .char-meter .short { color: var(--copper); }
 
         label[data-testid="stWidgetLabel"] p,
         [data-testid="stTextArea"] label p {
-            font-family: "Source Sans 3", sans-serif !important;
-            color: #d8d3c8 !important;
+            font-family: var(--sans) !important;
+            color: #cfc9bf !important;
             font-weight: 500 !important;
-            letter-spacing: 0.01em;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            font-size: 0.72rem !important;
         }
 
         textarea {
-            background-color: #171b21 !important;
-            color: #efeae2 !important;
-            border: 1px solid #323844 !important;
+            background-color: #0c1015 !important;
+            color: var(--ink) !important;
+            border: 1px solid #3a4452 !important;
             border-radius: 8px !important;
-            font-family: "Source Sans 3", sans-serif !important;
-            font-size: 1rem !important;
-            line-height: 1.65 !important;
+            font-family: var(--serif) !important;
+            font-size: 1.02rem !important;
+            line-height: 1.75 !important;
+            min-height: 300px !important;
         }
 
         textarea:focus {
-            border-color: #b9a27a !important;
-            box-shadow: 0 0 0 1px #b9a27a !important;
+            border-color: rgba(61, 155, 143, 0.65) !important;
+            box-shadow: 0 0 0 1px rgba(61, 155, 143, 0.3) !important;
         }
 
-        div.stButton > button {
-            background: #c4ae86;
-            color: #1a160f;
-            border: none;
-            border-radius: 6px;
-            font-family: "Source Sans 3", sans-serif;
-            font-weight: 600;
-            letter-spacing: 0.04em;
-            padding: 0.55rem 1.35rem;
-            transition: background 0.15s ease;
+        div.stButton > button[kind="primary"],
+        div.stButton > button[data-testid="stBaseButton-primary"] {
+            background: transparent !important;
+            color: var(--copper) !important;
+            border: 1.5px solid var(--copper) !important;
+            border-radius: 5px !important;
+            font-family: var(--sans) !important;
+            font-weight: 600 !important;
+            letter-spacing: 0.14em !important;
+            text-transform: uppercase !important;
+            font-size: 0.8rem !important;
+            padding: 0.72rem 1.7rem !important;
+            box-shadow: none !important;
+            transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
         }
 
-        div.stButton > button:hover {
-            background: #d4c19a;
-            color: #1a160f;
-            border: none;
+        div.stButton > button[kind="primary"]:hover,
+        div.stButton > button[data-testid="stBaseButton-primary"]:hover {
+            background: rgba(201, 166, 107, 0.14) !important;
+            color: #f0dfbc !important;
+            border-color: #dfc08a !important;
         }
 
-        div.stButton > button:focus {
-            box-shadow: 0 0 0 2px #0f1216, 0 0 0 4px #b9a27a;
+        div.stButton > button[kind="primary"]:focus,
+        div.stButton > button[data-testid="stBaseButton-primary"]:focus {
+            box-shadow: 0 0 0 2px var(--canvas), 0 0 0 4px rgba(61, 155, 143, 0.45) !important;
+        }
+
+        .page-motto {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            gap: 1rem;
+            margin: 1.6rem 0 0.4rem 0;
+            padding: 1.1rem 0.2rem 0.2rem 0.2rem;
+            border-top: 1px solid var(--line);
+        }
+
+        .page-motto .motto {
+            font-family: var(--serif);
+            font-style: italic;
+            font-size: 1.08rem;
+            color: #cfc8bc;
+            margin: 0 0 0.3rem 0;
+            max-width: 28rem;
+            line-height: 1.45;
+        }
+
+        .page-motto .motto-attr {
+            font-family: var(--sans);
+            font-size: 0.74rem;
+            color: var(--quiet);
+            margin: 0;
+        }
+
+        .insight-panel {
+            position: relative;
+            margin-top: 1.55rem;
+            padding: 1.45rem 1.55rem 1.5rem 1.55rem;
+            border: 1px solid #323b48;
+            border-radius: 8px;
+            background:
+                linear-gradient(180deg, #181e26 0%, #13181f 100%);
+            box-shadow: none;
+            animation: panel-in 0.35s ease-out both;
+        }
+
+        .insight-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 1rem;
+        }
+
+        .insight-title {
+            font-family: var(--serif);
+            font-weight: 700;
+            font-size: 1.48rem;
+            color: #f2ede4;
+            margin: 0;
+            line-height: 1.25;
+            max-width: 18ch;
+        }
+
+        .insight-sprig {
+            width: 1.85rem;
+            height: 1.85rem;
+            color: var(--copper);
+            opacity: 0.8;
+            flex-shrink: 0;
+            margin-top: 0.15rem;
+        }
+
+        .insight-ornament {
+            display: flex;
+            align-items: center;
+            gap: 0.55rem;
+            margin: 1rem 0 1.15rem 0;
+            max-width: 11rem;
+        }
+
+        .insight-ornament-line {
+            flex: 1;
+            height: 1px;
+            background: rgba(201, 166, 107, 0.45);
+        }
+
+        .insight-ornament-dot {
+            width: 0.28rem;
+            height: 0.28rem;
+            border-radius: 50%;
+            background: var(--copper);
+            opacity: 0.85;
+            flex-shrink: 0;
+        }
+
+        .insight-body {
+            font-family: var(--serif);
+            font-size: 1.04rem;
+            line-height: 1.8;
+            color: #d2cbbf;
+            max-width: 39rem;
+        }
+
+        .insight-body p {
+            margin: 0 0 0.95rem 0;
+        }
+
+        .insight-body p:last-child {
+            margin-bottom: 0;
         }
 
         .result-panel {
-            margin-top: 1.6rem;
-            background: linear-gradient(165deg, #181c23 0%, #14181e 100%);
-            border: 1px solid #2c313a;
-            border-radius: 12px;
-            padding: 1.5rem 1.5rem 1.35rem 1.5rem;
-            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+            position: relative;
+            margin-top: 1.35rem;
+            padding: 1.4rem 1.4rem 1.2rem 1.4rem;
+            background: #151b23;
+            border: 1px solid #2f3844;
+            border-radius: 8px;
+            box-shadow: none;
+            animation: panel-in 0.4s ease-out both;
         }
 
-        .result-heading {
-            font-family: "Cormorant Garamond", Georgia, serif;
-            font-size: 1.55rem;
-            color: #f4f0e8;
-            margin: 0 0 0.15rem 0;
+        .results-kicker {
+            font-family: var(--sans);
+            font-size: 0.64rem;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--quiet);
+            margin: 0 0 1.05rem 0;
+        }
+
+        .result-top {
+            display: grid;
+            grid-template-columns: minmax(8.5rem, 0.9fr) 1.35fr;
+            gap: 1.45rem;
+            align-items: start;
+        }
+
+        @media (max-width: 720px) {
+            .result-top { grid-template-columns: 1fr; }
+        }
+
+        .dominant-label {
+            font-family: var(--sans);
+            font-size: 0.64rem;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--quiet);
+            margin: 0 0 0.4rem 0;
         }
 
         .dominant-emotion {
-            font-family: "Cormorant Garamond", Georgia, serif;
-            font-size: 2.05rem;
-            color: #c4ae86;
-            margin: 0 0 1.25rem 0;
-            letter-spacing: 0.02em;
+            font-family: var(--serif);
+            font-size: clamp(1.85rem, 3.6vw, 2.35rem);
+            font-style: italic;
+            color: var(--teal);
+            margin: 0;
+            line-height: 1.12;
+            letter-spacing: 0.01em;
         }
 
         .emotion-table {
             display: flex;
             flex-direction: column;
-            gap: 0.65rem;
+            gap: 0.62rem;
         }
 
-        .emotion-head,
+        .emotion-head { display: none; }
+
         .emotion-row {
             display: grid;
-            grid-template-columns: 2.2rem 1fr 2.2fr 4.5rem;
+            grid-template-columns: 1.15fr 2fr 3.2rem;
             align-items: center;
-            column-gap: 0.85rem;
+            column-gap: 0.7rem;
+            background: transparent;
+            border: none;
+            border-radius: 0;
+            padding: 0.1rem 0;
         }
 
-        .emotion-head {
-            font-family: "Source Sans 3", sans-serif;
-            font-size: 0.68rem;
-            letter-spacing: 0.14em;
-            text-transform: uppercase;
-            color: #7a756e;
-            padding-bottom: 0.35rem;
-            border-bottom: 1px solid #2a2f38;
-            margin-bottom: 0.15rem;
-        }
-
-        .emotion-row {
-            background: rgba(12, 14, 18, 0.55);
-            border: 1px solid #2a3039;
-            border-radius: 8px;
-            padding: 0.65rem 0.75rem;
-        }
-
-        .emotion-rank {
-            font-family: "Cormorant Garamond", Georgia, serif;
-            font-size: 1.35rem;
-            color: #b9a27a;
-            text-align: center;
-        }
+        .emotion-rank { display: none; }
 
         .emotion-name {
-            font-family: "Source Sans 3", sans-serif;
-            font-size: 1.02rem;
+            font-family: var(--sans);
+            font-size: 0.88rem;
             font-weight: 500;
-            color: #ebe6dd;
+            color: #d6d0c5;
         }
 
         .emotion-bar-track {
-            height: 0.45rem;
-            background: #252a33;
-            border-radius: 999px;
+            height: 0.28rem;
+            background: #252c35;
+            border-radius: 2px;
             overflow: hidden;
         }
 
         .emotion-bar-fill {
             height: 100%;
-            border-radius: 999px;
+            border-radius: 2px;
             transition: width 0.35s ease;
         }
 
-        .emotion-bar-fill.rank-1 { background: linear-gradient(90deg, #c4ae86, #e0cba0); }
-        .emotion-bar-fill.rank-2 { background: linear-gradient(90deg, #8f9aa8, #b5c0cc); }
-        .emotion-bar-fill.rank-3 { background: linear-gradient(90deg, #6b7a8c, #8a97a8); }
+        .emotion-bar-fill.rank-1 { background: var(--teal); }
+        .emotion-bar-fill.rank-2 { background: #a8926f; }
+        .emotion-bar-fill.rank-3 { background: #6a7380; }
 
         .emotion-pct {
-            font-family: "Source Sans 3", sans-serif;
-            font-size: 0.95rem;
-            font-weight: 600;
-            color: #d4cfc6;
+            font-family: var(--sans);
+            font-size: 0.8rem;
+            font-weight: 500;
+            color: #a8a296;
             text-align: right;
+            font-variant-numeric: tabular-nums;
         }
 
-        .pipeline-note {
-            font-family: "Source Sans 3", sans-serif;
-            color: #9a958d;
-            font-size: 0.82rem;
-            margin: 0 0 0.75rem 0;
-            padding: 0.55rem 0.65rem;
-            border-left: 2px solid #5c5345;
-            background: rgba(10, 12, 15, 0.45);
-            border-radius: 0 6px 6px 0;
+        .result-foot {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            gap: 1rem;
+            margin-top: 1.3rem;
+            padding-top: 1rem;
+            border-top: 1px solid #2c3440;
         }
 
-        [data-testid="stExpander"],
-        [data-testid="stExpander"].insight-expander {
-            margin-top: 1.25rem;
-            border: 1px solid #2c313a;
+        .motto {
+            font-family: var(--serif);
+            font-style: italic;
+            font-size: 1.02rem;
+            color: #c5bfb4;
+            margin: 0 0 0.28rem 0;
+            max-width: 30rem;
+            line-height: 1.42;
+        }
+
+        .motto-attr {
+            font-family: var(--sans);
+            font-size: 0.72rem;
+            color: var(--quiet);
+            margin: 0;
+            letter-spacing: 0.02em;
+        }
+
+        .panel-sprig {
+            width: 2.2rem;
+            height: 2.2rem;
+            color: var(--copper);
+            opacity: 0.75;
+            flex-shrink: 0;
+        }
+
+        [data-testid="stExpander"] {
+            margin-top: 1.2rem;
+            border: 1px solid var(--line);
             border-radius: 10px;
-            background: #14181e;
-        }
-
-        [data-testid="stExpander"].insight-expander {
-            margin-bottom: 0.5rem;
-            border-color: #3d4a3a;
-            background: linear-gradient(165deg, #1a2218 0%, #14181e 100%);
+            background: var(--surface);
         }
 
         [data-testid="stExpander"] summary {
-            font-family: "Cormorant Garamond", Georgia, serif;
-            font-size: 1.15rem;
-            color: #d8d3c8;
+            font-family: var(--serif);
+            font-size: 1.12rem;
+            color: #e4dfd6;
         }
 
         [data-testid="stExpander"] p {
-            font-family: "Source Sans 3", sans-serif;
-            color: #a8a39a;
+            font-family: var(--sans);
+            color: var(--muted);
             line-height: 1.7;
             font-size: 0.95rem;
         }
@@ -1271,7 +1858,7 @@ st.markdown(
             display: flex;
             justify-content: flex-end;
             align-items: flex-start;
-            padding-top: 0.35rem;
+            padding-top: 0.2rem;
         }
 
         [data-testid="column"]:has(.methodology-info-anchor) [data-testid="stButton"] {
@@ -1279,93 +1866,48 @@ st.markdown(
         }
 
         [data-testid="column"]:has(.methodology-info-anchor) button {
-            position: relative;
             display: inline-flex !important;
             align-items: center !important;
             justify-content: center !important;
-            box-sizing: border-box !important;
-            min-width: 3rem !important;
-            width: 3rem !important;
-            height: 3rem !important;
-            max-width: 3rem !important;
-            max-height: 3rem !important;
+            min-width: 2.7rem !important;
+            width: 2.7rem !important;
+            height: 2.7rem !important;
             padding: 0 !important;
-            margin: 0 !important;
             border-radius: 50% !important;
-            border: 1px solid rgba(185, 162, 122, 0.45) !important;
-            background:
-                radial-gradient(
-                    circle at 32% 28%,
-                    rgba(196, 174, 134, 0.18) 0%,
-                    transparent 56%
-                ),
-                linear-gradient(158deg, #262d37 0%, #14181e 100%) !important;
-            box-shadow:
-                0 8px 22px rgba(0, 0, 0, 0.32),
-                inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
-            transition:
-                border-color 0.2s ease,
-                transform 0.2s ease,
-                box-shadow 0.2s ease,
-                background 0.2s ease;
-        }
-
-        [data-testid="column"]:has(.methodology-info-anchor) button::before {
-            content: "";
-            position: absolute;
-            inset: 7px;
-            border-radius: 50%;
-            border: 1px solid rgba(196, 174, 134, 0.22);
-            pointer-events: none;
+            border: 1px solid rgba(61, 155, 143, 0.45) !important;
+            background: var(--surface) !important;
+            box-shadow: none !important;
         }
 
         [data-testid="column"]:has(.methodology-info-anchor) button p {
             margin: 0 !important;
-            padding: 0 !important;
-            font-family: "Cormorant Garamond", Georgia, serif !important;
+            font-family: var(--serif) !important;
             font-style: italic !important;
-            font-weight: 600 !important;
-            font-size: 1.55rem !important;
-            line-height: 1 !important;
-            color: #c9b38a !important;
-            transform: translateY(-1px);
+            font-weight: 700 !important;
+            font-size: 1.35rem !important;
+            color: var(--teal) !important;
         }
 
         [data-testid="column"]:has(.methodology-info-anchor) button:hover {
-            border-color: rgba(216, 193, 148, 0.8) !important;
-            transform: translateY(-2px);
-            box-shadow:
-                0 12px 28px rgba(0, 0, 0, 0.38),
-                0 0 0 1px rgba(196, 174, 134, 0.14),
-                inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
-        }
-
-        [data-testid="column"]:has(.methodology-info-anchor) button:hover p {
-            color: #ede3cf !important;
-        }
-
-        [data-testid="column"]:has(.methodology-info-anchor) button:focus {
-            outline: none !important;
-            box-shadow:
-                0 0 0 2px #0f1216,
-                0 0 0 4px rgba(185, 162, 122, 0.55) !important;
+            border-color: var(--teal) !important;
+            background: rgba(61, 155, 143, 0.1) !important;
         }
 
         [data-testid="stDialog"] h2 {
-            font-family: "Cormorant Garamond", Georgia, serif !important;
+            font-family: var(--serif) !important;
             color: #f4f0e8 !important;
-            font-weight: 600 !important;
         }
 
         [data-testid="stDialog"] p,
         [data-testid="stDialog"] li {
-            font-family: "Source Sans 3", sans-serif !important;
-            color: #a8a39a !important;
+            font-family: var(--sans) !important;
+            color: var(--muted) !important;
             line-height: 1.7;
         }
 
-        [data-testid="stDialog"] ul {
-            padding-left: 1.15rem;
+        textarea::placeholder {
+            color: #8a857c !important;
+            opacity: 1 !important;
         }
     </style>
     """,
@@ -1377,8 +1919,8 @@ with mast_col:
     st.markdown(
         f"""
         <div class="masthead">
-            <p class="kicker">{UI_EN["kicker"]}</p>
             <h1 class="app-title">{UI_EN["title"]}</h1>
+            <p class="lede">{UI_EN["input_hint"]}</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1398,7 +1940,13 @@ with info_col:
         methodology_dialog()
 
 st.markdown(
-    '<style> textarea::placeholder { color: #b0b0b0 !important; opacity: 1 !important; } </style>',
+    f"""
+    <div class="stage-shell">
+      <div class="stage-top">
+        <p class="stage-label">Analysis stage</p>
+      </div>
+    </div>
+    """,
     unsafe_allow_html=True,
 )
 
@@ -1407,15 +1955,48 @@ metin = st.text_area(
     height=320,
     placeholder=UI_EN["placeholder"],
 )
-
-analysis_language_label = st.selectbox(
-    UI_EN["analysis_language"],
-    options=sorted(ANALYSIS_LANGUAGE_CHOICES.keys()),
-    index=sorted(ANALYSIS_LANGUAGE_CHOICES.keys()).index("English"),
+karakter_sayisi = len(metin.strip())
+derin_hazir = _metin_derin_analiz_uygun(metin)
+metre_sinif = "ready" if derin_hazir else "short"
+metre_durum = (
+    "Ready for philosophical insight"
+    if derin_hazir
+    else f"Insight unlocks at ~{MIN_CHARS_DEEP}+ characters"
 )
+st.markdown(
+    f'<div class="char-meter">'
+    f'<span>{UI_EN["char_count"].format(n=karakter_sayisi)}</span>'
+    f'<span class="{metre_sinif}">{metre_durum}</span>'
+    f"</div>",
+    unsafe_allow_html=True,
+)
+
+lang_col, btn_col = st.columns([2, 1], vertical_alignment="bottom")
+with lang_col:
+    analysis_language_label = st.selectbox(
+        UI_EN["analysis_language"],
+        options=sorted(ANALYSIS_LANGUAGE_CHOICES.keys()),
+        index=sorted(ANALYSIS_LANGUAGE_CHOICES.keys()).index("English"),
+    )
+with btn_col:
+    analiz_et = st.button(UI_EN["analyze_button"], type="primary")
 results_lang = ANALYSIS_LANGUAGE_CHOICES[analysis_language_label]
 
-analiz_et = st.button(UI_EN["analyze_button"], type="primary")
+st.markdown(
+    f"""
+    <div class="page-motto">
+      <div>
+        <p class="motto">{UI_EN["motto"]}</p>
+        <p class="motto-attr">{UI_EN["motto_attr"]}</p>
+      </div>
+      <svg class="panel-sprig" viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M32 58 C32 40 18 32 12 18 C22 20 30 28 32 40 C34 28 42 20 52 18 C46 32 32 40 32 58 Z" fill="none" stroke="currentColor" stroke-width="1.4"/>
+        <path d="M32 58 V28" fill="none" stroke="currentColor" stroke-width="1.2"/>
+      </svg>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 if analiz_et:
     if not metin.strip():
@@ -1424,62 +2005,51 @@ if analiz_et:
         try:
             insight_metni = ""
             temiz_metin = metin.strip()
-            edebi_metin = _katmanli_edebi_metin(temiz_metin)
+            derin_analiz = _metin_derin_analiz_uygun(temiz_metin)
             gemini_anahtar = "GEMINI_API_KEY" in st.secrets
-            edebi_gemini = edebi_metin and gemini_anahtar
+            # Main-thread pipeline: RoBERTa first (backup), then one Gemini pass.
             with st.spinner(""):
-                with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-                    fut_roberta = pool.submit(
-                        _analyze_emotions, temiz_metin, results_lang
-                    )
-                    fut_gemini = None
-                    if edebi_gemini:
-                        fut_gemini = pool.submit(
-                            gemini_edebi_birlesik, temiz_metin, results_lang
+                _, ust_uc, baskın, _ = _analyze_emotions(
+                    temiz_metin, results_lang
+                )
+            if gemini_anahtar and derin_analiz:
+                with st.spinner(""):
+                    try:
+                        gemini_uc, insight_metni = gemini_birlesik_analiz(
+                            temiz_metin, results_lang
                         )
-                    elif gemini_anahtar:
-                        fut_gemini = pool.submit(
-                            _fetch_insight, temiz_metin, results_lang
-                        )
-                    _, ust_uc, baskın, _ = fut_roberta.result()
-                    if edebi_gemini and fut_gemini is not None:
-                        try:
-                            ust_uc, insight_metni = fut_gemini.result()
+                        if gemini_uc:
+                            ust_uc = gemini_uc
                             baskın = emotion_display(
                                 ust_uc[0]["label"], results_lang
                             )
-                        except Exception as insight_exc:
-                            mesaj = _insight_hata_mesaji(insight_exc)
-                            if mesaj:
-                                seviye, metin_mesaj = mesaj
-                                if seviye == "warning":
-                                    st.warning(metin_mesaj)
-                                else:
-                                    st.error(metin_mesaj)
-                            insight_metni = ""
-                    elif fut_gemini is not None:
-                        try:
-                            insight_metni = fut_gemini.result()
-                        except Exception as insight_exc:
-                            mesaj = _insight_hata_mesaji(insight_exc)
-                            if mesaj:
-                                seviye, metin_mesaj = mesaj
-                                if seviye == "warning":
-                                    st.warning(metin_mesaj)
-                                else:
-                                    st.error(metin_mesaj)
-                            insight_metni = ""
-                    else:
+                    except Exception as insight_exc:
+                        mesaj = _insight_hata_mesaji(insight_exc)
+                        if mesaj:
+                            seviye, metin_mesaj = mesaj
+                            if seviye == "warning":
+                                st.warning(metin_mesaj)
+                            else:
+                                st.error(metin_mesaj)
                         insight_metni = ""
+            else:
+                insight_metni = ""
 
             tablo = duygu_tablosu_html(ust_uc, results_lang)
 
-            with st.expander(UI_EN["insight_title"], expanded=True):
-                if insight_metni:
-                    st.markdown(insight_metni)
+            if not derin_analiz:
+                st.info(
+                    UI_EN["warning_too_short"].format(min_chars=MIN_CHARS_DEEP)
+                )
+            elif insight_metni:
+                st.markdown(
+                    insight_paneli_html(insight_metni),
+                    unsafe_allow_html=True,
+                )
 
+            soz, soz_kaynak = rastgele_analiz_sozu()
             st.markdown(
-                sonuc_paneli_html(baskın, tablo),
+                sonuc_paneli_html(baskın, tablo, soz, soz_kaynak),
                 unsafe_allow_html=True,
             )
 
