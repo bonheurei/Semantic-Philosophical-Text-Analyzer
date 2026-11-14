@@ -1,0 +1,456 @@
+{
+  "version": 2,
+  "license_note": "Each analysis text below is original commentary written for this project (CC0). Quoted source lines are short excerpts from public-domain works only.",
+  "entries": [
+    {
+      "id": "seneca-disturbance",
+      "work": "Moral Letters to Lucilius",
+      "author": "Seneca",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["stoicism", "tranquility", "wealth", "inner_life", "disturbance"],
+      "keywords": ["mind", "disturbance", "wealth", "freedom", "peace", "letter"],
+      "passage_hint": "The mind that is free from disturbance is the true wealth.",
+      "analysis": "The letter relocates value from external possession to psychic composure. Wealth is redefined as the absence of agitation, so the moral claim is diagnostic: if the mind is turbulent, the person remains poor regardless of circumstance. The tone is corrective rather than consoling."
+    },
+    {
+      "id": "marcus-impermanence",
+      "work": "Meditations",
+      "author": "Marcus Aurelius",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["stoicism", "impermanence", "duty", "mortality", "acceptance"],
+      "keywords": ["time", "change", "death", "nature", "duty", "present"],
+      "passage_hint": "You could leave life right now. Let that determine what you do and say and think.",
+      "analysis": "Urgency here is ethical, not melodramatic. Mortality compresses attention onto present action and speech. The voice is private and disciplinary: philosophy functions as a daily instrument for cutting vanity and delay, not as abstract metaphysics."
+    },
+    {
+      "id": "epictetus-control",
+      "work": "Enchiridion",
+      "author": "Epictetus",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["stoicism", "agency", "control", "freedom", "judgment"],
+      "keywords": ["control", "opinion", "freedom", "choice", "externals"],
+      "passage_hint": "Some things are in our control and others not.",
+      "analysis": "The passage draws a hard boundary between judgment and externals. Freedom is framed as a practice of sorting: what can be chosen versus what must be endured. Emotional suffering is treated as a misassignment of control rather than as fate alone."
+    },
+    {
+      "id": "lucretius-fear",
+      "work": "On the Nature of Things",
+      "author": "Lucretius",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["mortality", "fear", "nature", "materialism", "consolation"],
+      "keywords": ["death", "fear", "atoms", "soul", "nature", "void"],
+      "passage_hint": "Death is nothing to us.",
+      "analysis": "Consolation arrives through ontology: if sensation ends with the body, death cannot be experienced as harm. The poem tries to dissolve terror by rewriting what a self is. Calm is not denial; it is a metaphysical argument against anticipating a state one will never inhabit."
+    },
+    {
+      "id": "plato-cave",
+      "work": "The Republic (Allegory of the Cave)",
+      "author": "Plato",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["illusion", "knowledge", "education", "reality", "liberation"],
+      "keywords": ["cave", "shadow", "light", "truth", "prisoner", "sun"],
+      "passage_hint": "They see only their own shadows, or the shadows of one another.",
+      "analysis": "Perception is socialized captivity. What passes for reality is a projected economy of images. Education is painful ascent: liberation includes disorientation, and returning with truth risks hostility from those still fluent in shadows."
+    },
+    {
+      "id": "aristotle-habit",
+      "work": "Nicomachean Ethics",
+      "author": "Aristotle",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["virtue", "habit", "character", "ethics", "practice"],
+      "keywords": ["habit", "virtue", "excellence", "character", "action", "mean"],
+      "passage_hint": "We become just by doing just acts.",
+      "analysis": "Character is treated as accumulated practice, not sudden insight. Ethics becomes craft-like: repeated action sediments into disposition. The passage resists both pure theory and pure feeling, locating moral life in what one continually does."
+    },
+    {
+      "id": "sophocles-knowledge",
+      "work": "Oedipus the King",
+      "author": "Sophocles",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["knowledge", "fate", "blindness", "truth", "tragedy"],
+      "keywords": ["sight", "blind", "truth", "fate", "know", "oracle"],
+      "passage_hint": "How terrible is wisdom when it brings no profit to the wise.",
+      "analysis": "Knowing is separated from saving. Recognition arrives too late to repair the world it reveals. Tragedy here is epistemic: the drive to uncover truth becomes the mechanism of ruin, and sight turns into a moral wound."
+    },
+    {
+      "id": "homer-homecoming",
+      "work": "The Odyssey",
+      "author": "Homer",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["homecoming", "identity", "endurance", "memory", "desire"],
+      "keywords": ["home", "return", "wander", "name", "endure", "sea"],
+      "passage_hint": "Tell me, Muse, of the man of many ways.",
+      "analysis": "Identity is proven through deferred return. The hero is defined less by conquest than by the capacity to remain oriented toward home across delay and disguise. Narrative desire itself becomes ethical: longing structures endurance."
+    },
+    {
+      "id": "augustine-restless",
+      "work": "Confessions",
+      "author": "Augustine",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["restlessness", "desire", "conversion", "memory", "god"],
+      "keywords": ["restless", "heart", "desire", "memory", "confession", "turn"],
+      "passage_hint": "Our heart is restless until it rests in you.",
+      "analysis": "Desire is diagnosed as misdirected motion. Restlessness is not mere anxiety; it is metaphysical homesickness. The confession form makes inward narrative a path of reorientation, where memory becomes the theater of moral recovery."
+    },
+    {
+      "id": "boethius-fortune",
+      "work": "The Consolation of Philosophy",
+      "author": "Boethius",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["fortune", "consolation", "stability", "suffering", "philosophy"],
+      "keywords": ["fortune", "wheel", "consolation", "prison", "change", "good"],
+      "passage_hint": "Wealth, honors, power, glory, and pleasure are not the true good.",
+      "analysis": "Philosophy speaks against the instability of external goods. Suffering becomes an occasion to relocate value from fortune’s wheel to inward constancy. Consolation is argumentative: it tries to talk the self out of mistaking circumstance for worth."
+    },
+    {
+      "id": "dante-midway",
+      "work": "Inferno",
+      "author": "Dante Alighieri",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["lostness", "sin", "guidance", "journey", "moral_order"],
+      "keywords": ["dark", "wood", "lost", "midway", "path", "fear"],
+      "passage_hint": "Midway upon the journey of our life I found myself within a forest dark.",
+      "analysis": "Crisis is spatialized as disorientation. The self wakes already astray, so narrative begins in moral geography rather than biography. Fear opens the need for guidance; the poem treats salvation as a guided itinerary through ordered meaning."
+    },
+    {
+      "id": "montaigne-self",
+      "work": "Essays",
+      "author": "Michel de Montaigne",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["self", "doubt", "essay", "experience", "humility"],
+      "keywords": ["self", "essay", "doubt", "know", "change", "I"],
+      "passage_hint": "I am myself the matter of my book.",
+      "analysis": "The essay turns the self into an experimental field rather than a finished portrait. Certainty yields to provisional noticing. Intellectual humility becomes a style: thought advances by circling lived experience instead of declaring systems."
+    },
+    {
+      "id": "machiavelli-appearance",
+      "work": "The Prince",
+      "author": "Niccolò Machiavelli",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["power", "appearance", "politics", "virtue", "necessity"],
+      "keywords": ["appear", "prince", "power", "fear", "virtue", "fortune"],
+      "passage_hint": "Everyone sees what you appear to be, few experience what you really are.",
+      "analysis": "Politics is read as a management of surfaces. Moral reputation becomes strategic capital, and authenticity is demoted beneath efficacy. The coldness of the prose is itself an argument: necessity reframes virtue as adaptable performance."
+    },
+    {
+      "id": "shakespeare-hamlet-thinking",
+      "work": "Hamlet",
+      "author": "William Shakespeare",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["doubt", "action", "conscience", "paralysis", "appearance"],
+      "keywords": ["think", "action", "conscience", "dream", "delay", "being"],
+      "passage_hint": "Thus conscience does make cowards of us all.",
+      "analysis": "Reflection is shown as both illumination and obstruction. Conscience multiplies possible futures until action stalls. The line does not celebrate thought; it exposes how moral awareness can become a refined form of fear."
+    },
+    {
+      "id": "shakespeare-tempest-forgiveness",
+      "work": "The Tempest",
+      "author": "William Shakespeare",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["power", "forgiveness", "illusion", "reconciliation", "art"],
+      "keywords": ["forgive", "power", "island", "magic", "mercy", "end"],
+      "passage_hint": "The rarer action is in virtue than in vengeance.",
+      "analysis": "Authority is tested at the moment it could punish. Mercy is presented as the harder, rarer act—an ethical climax rather than a soft ending. Spectacle and enchantment fall away so that political and personal repair can stand without magic."
+    },
+    {
+      "id": "shakespeare-lear-nothing",
+      "work": "King Lear",
+      "author": "William Shakespeare",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["nothingness", "recognition", "power", "love", "exposure"],
+      "keywords": ["nothing", "love", "king", "storm", "fool", "see"],
+      "passage_hint": "Nothing will come of nothing.",
+      "analysis": "Speech and being are forced into brutal economy: refuse the ritual of flattery and you are treated as void. The tragedy strips rank until love and need stand without costume. Recognition arrives through exposure, not ceremony."
+    },
+    {
+      "id": "donne-death",
+      "work": "Holy Sonnets",
+      "author": "John Donne",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["mortality", "defiance", "faith", "death", "consolation"],
+      "keywords": ["death", "proud", "die", "soul", "sleep", "wake"],
+      "passage_hint": "Death, be not proud, though some have called thee mighty and dreadful.",
+      "analysis": "Death is apostrophized into a temporary tyrant. The sonnet shrinks dread by reframing dying as sleep before waking. Defiance is theological rhetoric: pride is inverted so that mortality loses majesty."
+    },
+    {
+      "id": "milton-disobedience",
+      "work": "Paradise Lost",
+      "author": "John Milton",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["disobedience", "freedom", "pride", "fall", "knowledge"],
+      "keywords": ["disobedience", "fall", "Eden", "pride", "freedom", "fruit"],
+      "passage_hint": "Of Man’s first disobedience, and the fruit of that forbidden tree.",
+      "analysis": "The epic frames catastrophe as a choice about knowledge and autonomy. Freedom is double-edged: the capacity to transgress is also the capacity to ruin an ordered world. Grand style does not hide the ethical knot—agency and loss arrive together."
+    },
+    {
+      "id": "pascal-diversion",
+      "work": "Pensées",
+      "author": "Blaise Pascal",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["diversion", "restlessness", "mortality", "self", "emptiness"],
+      "keywords": ["diversion", "rest", "misery", "thought", "death", "amusement"],
+      "passage_hint": "All the unhappiness of men arises from one single fact, that they cannot stay quietly in their own chamber.",
+      "analysis": "Busyness is read as flight from self-knowledge. Diversion protects against confronting mortality and inward emptiness. The aphoristic cut is psychological and metaphysical at once: restlessness becomes evidence of an unresolved condition."
+    },
+    {
+      "id": "swift-perspective",
+      "work": "Gulliver’s Travels",
+      "author": "Jonathan Swift",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["satire", "perspective", "pride", "society", "scale"],
+      "keywords": ["travel", "tiny", "giant", "reason", "pride", "human"],
+      "passage_hint": "I cannot but conclude the bulk of your natives to be the most pernicious race of little odious vermin.",
+      "analysis": "Scale becomes moral argument. By shifting size and viewpoint, the satire dissolves human self-importance into grotesquerie. Reason is implicated too: cultivated intelligence can intensify contempt rather than produce wisdom."
+    },
+    {
+      "id": "voltaire-optimism",
+      "work": "Candide",
+      "author": "Voltaire",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["optimism", "suffering", "irony", "philosophy", "practice"],
+      "keywords": ["best", "world", "optimism", "garden", "suffer", "reason"],
+      "passage_hint": "We must cultivate our garden.",
+      "analysis": "Abstract optimism collapses under accumulated catastrophe. The ending pivots from system-building to local labor. Irony clears the ground so that modest practice replaces consoling metaphysics as the only credible response."
+    },
+    {
+      "id": "austen-irony",
+      "work": "Pride and Prejudice",
+      "author": "Jane Austen",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["irony", "society", "judgment", "marriage", "pride"],
+      "keywords": ["truth", "marriage", "fortune", "pride", "prejudice", "society"],
+      "passage_hint": "It is a truth universally acknowledged, that a single man in possession of a good fortune, must be in want of a wife.",
+      "analysis": "The narrator’s certainty is social ventriloquism. What sounds like universal truth is neighborhood desire dressed as logic. Irony opens a gap between public speech and private motive, inviting the reader to distrust polished generalities."
+    },
+    {
+      "id": "blake-contraries",
+      "work": "The Marriage of Heaven and Hell",
+      "author": "William Blake",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["contraries", "energy", "restriction", "vision", "dualism"],
+      "keywords": ["contraries", "energy", "desire", "reason", "hell", "heaven"],
+      "passage_hint": "Without contraries is no progression.",
+      "analysis": "Progress requires tension, not purity. The aphorism attacks moral systems that exile energy and desire. Visionary prose treats opposition as generative: thought advances by holding fire and restraint in productive conflict."
+    },
+    {
+      "id": "wordsworth-memory",
+      "work": "Lines Composed a Few Miles above Tintern Abbey",
+      "author": "William Wordsworth",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["memory", "nature", "self", "time", "consolation"],
+      "keywords": ["memory", "nature", "landscape", "past", "restore", "mind"],
+      "passage_hint": "In hours of weariness, sensations sweet, felt in the blood, and felt along the heart.",
+      "analysis": "Landscape becomes stored inward resource. Memory does not merely recall a place; it metabolizes nature into emotional endurance. The poem treats recollection as ethical medicine for a self pressed by ordinary fatigue."
+    },
+    {
+      "id": "keats-urn",
+      "work": "Ode on a Grecian Urn",
+      "author": "John Keats",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["art", "time", "beauty", "truth", "desire"],
+      "keywords": ["urn", "beauty", "truth", "forever", "art", "silent"],
+      "passage_hint": "Beauty is truth, truth beauty,—that is all ye know on earth, and all ye need to know.",
+      "analysis": "The urn freezes desire into lasting form, then offers an enigmatic equation of beauty and truth. Art seems to solve time by stillness, yet the maxim’s closure remains unstable. The poem stages the temptation to let aesthetic intensity stand in for total knowledge."
+    },
+    {
+      "id": "poe-grief",
+      "work": "The Raven",
+      "author": "Edgar Allan Poe",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["grief", "obsession", "memory", "loss", "despair"],
+      "keywords": ["raven", "nevermore", "loss", "chamber", "grief", "memory"],
+      "passage_hint": "Quoth the Raven, ‘Nevermore.’",
+      "analysis": "Grief becomes rhythmic entrapment. The refrain seals possibility, converting mourning into a closed loop. Atmosphere and sound do interpretive work: loss is not explained so much as made inescapable through repetition."
+    },
+    {
+      "id": "emerson-reliance",
+      "work": "Self-Reliance",
+      "author": "Ralph Waldo Emerson",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["self", "individualism", "conformity", "trust", "voice"],
+      "keywords": ["self", "rely", "conform", "trust", "genius", "society"],
+      "passage_hint": "Trust thyself: every heart vibrates to that iron string.",
+      "analysis": "Authority is relocated to inward intuition against social mimicry. The essay treats conformity as spiritual failure. Its rhetoric is hortatory: individuality is framed as a duty of attention to one’s own grain of thought."
+    },
+    {
+      "id": "thoreau-simplify",
+      "work": "Walden",
+      "author": "Henry David Thoreau",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["simplicity", "nature", "deliberation", "society", "attention"],
+      "keywords": ["simplify", "life", "woods", "deliberate", "necessary", "awake"],
+      "passage_hint": "Simplify, simplify.",
+      "analysis": "The imperative is epistemic as much as ethical. Reducing wants clears perception so that life can be examined rather than merely endured. Withdrawal from social noise is framed as a method for waking attention, not as picturesque escape."
+    },
+    {
+      "id": "melville-whiteness",
+      "work": "Moby-Dick",
+      "author": "Herman Melville",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["obsession", "nature", "meaning", "void", "monomania"],
+      "keywords": ["whale", "white", "sea", "hunt", "meaning", "void", "terror"],
+      "passage_hint": "It was the whiteness of the whale that above all things appalled me.",
+      "analysis": "Color becomes metaphysical threat. Whiteness is not purity but an emptying of stable meaning—an excess of blankness that the hunter fills with purpose. Obsession grows where interpretation fails, turning nature into a screen for will."
+    },
+    {
+      "id": "hawthorne-guilt",
+      "work": "The Scarlet Letter",
+      "author": "Nathaniel Hawthorne",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["guilt", "shame", "society", "secrecy", "judgment"],
+      "keywords": ["scarlet", "letter", "sin", "shame", "secret", "public"],
+      "passage_hint": "On the breast of her gown, in fine red cloth, surrounded with an elaborate embroidery… appeared the letter A.",
+      "analysis": "Punishment is made visible as textile symbol, so community writes guilt onto the body. Public mark and private conscience diverge: spectacle disciplines while inward life complicates judgment. The novel reads stigma as social craft."
+    },
+    {
+      "id": "dickinson-death",
+      "work": "Because I could not stop for Death",
+      "author": "Emily Dickinson",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["mortality", "time", "calm", "eternity", "passage"],
+      "keywords": ["death", "carriage", "immortality", "civility", "eternity"],
+      "passage_hint": "Because I could not stop for Death – He kindly stopped for me –",
+      "analysis": "Death arrives with manners, not violence. The poem domesticates the absolute through civility and paced journey, so terror is displaced by eerie composure. Time dilates; the everyday ride becomes a crossing into unmeasured duration."
+    },
+    {
+      "id": "whitman-self",
+      "work": "Song of Myself",
+      "author": "Walt Whitman",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["self", "body", "democracy", "multiplicity", "nature"],
+      "keywords": ["self", "contain", "multitudes", "body", "song", "grass"],
+      "passage_hint": "I am large, I contain multitudes.",
+      "analysis": "Identity is expansive rather than unified. Contradiction is not failure but capacity. The speaker refuses a single moral center, treating the self as a crowded civic space where opposing impulses coexist without apology."
+    },
+    {
+      "id": "twain-conscience",
+      "work": "Adventures of Huckleberry Finn",
+      "author": "Mark Twain",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["conscience", "freedom", "society", "friendship", "moral_conflict"],
+      "keywords": ["conscience", "river", "friend", "wrong", "society", "decide"],
+      "passage_hint": "All right, then, I’ll go to hell.",
+      "analysis": "Moral clarity arrives as blasphemy against a corrupted conscience. The boy chooses loyalty over trained guilt, exposing how society can teach cruelty as virtue. Plain speech carries the ethical turn without sermon."
+    },
+    {
+      "id": "stevenson-double",
+      "work": "Strange Case of Dr Jekyll and Mr Hyde",
+      "author": "Robert Louis Stevenson",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["double_self", "repression", "evil", "identity", "science"],
+      "keywords": ["double", "hyde", "jekyll", "secret", "evil", "respectable"],
+      "passage_hint": "Man is not truly one, but truly two.",
+      "analysis": "Respectability is shown as a split architecture. The formula dramatizes repression’s return: denied appetite reappears as another self. Scientific control becomes the fantasy that fractures identity instead of integrating it."
+    },
+    {
+      "id": "dostoevsky-underground",
+      "work": "Notes from Underground",
+      "author": "Fyodor Dostoevsky",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["resentment", "freedom", "spite", "consciousness", "alienation"],
+      "keywords": ["underground", "spite", "free", "conscious", "illness", "reason"],
+      "passage_hint": "I am a sick man... I am a spiteful man.",
+      "analysis": "Self-knowledge becomes corrosive. Heightened consciousness does not liberate; it multiplies grievance and blocks sincere action. The narrator weaponizes awareness against both others and himself, making freedom look like the right to refuse health, reason, and reconciliation."
+    },
+    {
+      "id": "tolstoy-ivan",
+      "work": "The Death of Ivan Ilyich",
+      "author": "Leo Tolstoy",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["mortality", "falsity", "ordinary_life", "recognition", "suffering"],
+      "keywords": ["death", "life", "false", "pain", "ordinary", "truth"],
+      "passage_hint": "What if my whole life has been wrong?",
+      "analysis": "Dying exposes the hollowness of socially correct living. The question turns biography into verdict. Pain strips career and propriety until only authenticity and compassion remain intelligible measures of a life."
+    },
+    {
+      "id": "chekhov-unsaid",
+      "work": "The Lady with the Dog",
+      "author": "Anton Chekhov",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["love", "secrecy", "ordinary_life", "guilt", "beginning"],
+      "keywords": ["love", "secret", "life", "affair", "ordinary", "complicated"],
+      "passage_hint": "It was clear to both of them that they had still a long, long road before them.",
+      "analysis": "Climax is postponed into continuation. The story ends where moral and practical difficulty begins, refusing romantic closure. Emotional truth appears in understatement: the largest change is admitted as a lengthening road, not a declaration."
+    },
+    {
+      "id": "ibsen-dollhouse",
+      "work": "A Doll’s House",
+      "author": "Henrik Ibsen",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["freedom", "marriage", "identity", "duty", "awakening"],
+      "keywords": ["doll", "house", "leave", "duty", "self", "marriage"],
+      "passage_hint": "I must stand quite alone if I am to understand myself and everything about me.",
+      "analysis": "Domestic role collapses into recognized performance. Independence is framed as epistemic necessity: understanding the self requires leaving the scripted household. The door-slam is ethical punctuation more than melodrama."
+    },
+    {
+      "id": "kafka-law",
+      "work": "Before the Law",
+      "author": "Franz Kafka",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["bureaucracy", "access", "waiting", "authority", "absurd"],
+      "keywords": ["law", "door", "gatekeeper", "wait", "access", "permission"],
+      "passage_hint": "Before the law sits a gatekeeper.",
+      "analysis": "Authority is procedural and endless. The seeker waits for permission that is never granted in life, while the structure itself remains intact. Meaning drains into deferral: the tragedy is not a verdict but the consumption of a life by waiting."
+    },
+    {
+      "id": "shelley-creature",
+      "work": "Frankenstein",
+      "author": "Mary Shelley",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["creation", "responsibility", "isolation", "ambition", "monstrosity"],
+      "keywords": ["creature", "maker", "lonely", "ambition", "science", "abandon"],
+      "passage_hint": "I ought to be thy Adam, but I am rather the fallen angel.",
+      "analysis": "The creature’s complaint turns creation into ethical debt. Ambition without care produces isolation on both sides: maker and made. Monstrosity is relocated from body to neglected relation—the refusal to answer for what one brings into the world."
+    },
+    {
+      "id": "conrad-darkness",
+      "work": "Heart of Darkness",
+      "author": "Joseph Conrad",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["imperialism", "horror", "narrative", "civilization", "void"],
+      "keywords": ["darkness", "horror", "river", "civilization", "lie", "africa"],
+      "passage_hint": "The horror! The horror!",
+      "analysis": "The cry compresses judgment into almost wordless recognition. Civilization’s language fails at the moment of moral sight. Framing narrative keeps horror mediated: we receive extremity through recounted speech, so meaning arrives already shadowed by distance and complicity."
+    },
+    {
+      "id": "james-ambiguity",
+      "work": "The Turn of the Screw",
+      "author": "Henry James",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["ambiguity", "perception", "fear", "innocence", "narrative"],
+      "keywords": ["ghost", "govern", "child", "see", "uncertain", "evil"],
+      "passage_hint": "I was there to protect and defend the little creatures.",
+      "analysis": "Protection and projection blur. The governess’s certainty becomes the reader’s problem: evil may be supernatural or psychological. Ambiguity is not decoration; it is the engine that makes interpretation ethically risky."
+    },
+    {
+      "id": "wilde-portrait",
+      "work": "The Picture of Dorian Gray",
+      "author": "Oscar Wilde",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["appearance", "corruption", "art", "hedonism", "double_self"],
+      "keywords": ["portrait", "beauty", "soul", "secret", "youth", "sin"],
+      "passage_hint": "The only way to get rid of a temptation is to yield to it.",
+      "analysis": "Aesthetic hedonism offers a witty ethic that conceals accumulating cost. The portrait externalizes conscience so the face can remain unmarked. Wit becomes dangerous precisely because it makes corruption sound like elegance."
+    },
+    {
+      "id": "bronte-moor",
+      "work": "Wuthering Heights",
+      "author": "Emily Brontë",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["passion", "revenge", "nature", "love", "wildness"],
+      "keywords": ["moor", "love", "revenge", "storm", "soul", "cruel"],
+      "passage_hint": "I am Heathcliff.",
+      "analysis": "Love is stated as ontological fusion rather than affection. Identity collapses into the other, so passion becomes indistinguishable from possession and revenge. The moor’s weather mirrors an ethic where intensity outruns social form."
+    },
+    {
+      "id": "eliot-sympathy",
+      "work": "Middlemarch",
+      "author": "George Eliot",
+      "source_status": "public_domain_excerpt + original_commentary",
+      "themes": ["sympathy", "ordinary_life", "idealism", "marriage", "moral_vision"],
+      "keywords": ["sympathy", "ordinary", "ideal", "marriage", "failure", "see"],
+      "passage_hint": "That element of tragedy which lies in the very fact of frequency.",
+      "analysis": "Tragedy is relocated into common life. The novel asks for moral attention to unheroic constraint—failed ideals, muted marriages, partial sight. Sympathy becomes an interpretive duty: to see significance where spectacle is absent."
+    }
+  ]
+}

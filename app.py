@@ -13,6 +13,9 @@ from deep_translator.constants import MY_MEMORY_LANGUAGES_TO_CODES
 from deep_translator.exceptions import LanguageNotSupportedException, TooManyRequests
 from transformers import pipeline
 
+import feedback_memory
+import literary_memory
+
 MYMEMORY_INGILIZCE = "en-US"
 
 ISO_MYMEMORY_TERCIH = {
@@ -80,13 +83,52 @@ GEMINI_INSIGHT_PROMPT = (
 )
 EDISI_DUYGU_INKAR = re.compile(
     r"(hiçbir şey hisset|hissetmiyor|hissetmedim|duygum yok|duygu yok|"
-    r"felt nothing|don't feel|didn't feel|do not feel|no feeling|numb|detached)",
+    r"umursam|kayıtsız|kayitsiz|duygusuz|ilgisiz|"
+    r"felt nothing|don't feel|didn't feel|do not feel|no feeling|numb|detached|"
+    r"indifferent|indifference|doesn't (matter|care)|does not (matter|care)|"
+    r"indifférent|indifference|je m'en fous|cela m'est égal)",
     re.IGNORECASE,
 )
 EDISI_BEKLENEN_DUYGU = re.compile(
     r"(sanki .{0,48}(hisset|üzül|gibi)|should have felt|ought to feel|"
-    r"as if i (should|ought)|üzülmeliymiş)",
+    r"as if i (should|ought)|üzülmeliymiş|expected to (cry|grieve|feel)|"
+    r"supposed to (feel|grieve)|aurait dû (pleurer|ressentir))",
     re.IGNORECASE,
+)
+EDISI_OLAY_YASI = re.compile(
+    r"\b(ölüm|ölmüş|öldü|cenaze|anne.*öl|death|died|dead|funeral|mourning|"
+    r"mort|mère.*mort|muerte|tod)\b",
+    re.IGNORECASE,
+)
+GRIEFISH_LABELS = frozenset({"grief", "sadness", "remorse"})
+TON_LABELS = frozenset(
+    {
+        "realization",
+        "confusion",
+        "disappointment",
+        "neutral",
+        "nervousness",
+        "annoyance",
+        "approval",
+    }
+)
+GEMINI_EMOTION_CALIBRATION = (
+    "Emotion rules (event ≠ felt tone):\n"
+    "- Score the speaker/narrator's lived affect and stance, never plot keywords alone.\n"
+    "- Death, illness, loss, or crime in the plot do NOT automatically mean grief or sadness.\n"
+    "- If the voice is numb, flat, estranged, indifferent, or notes not feeling expected "
+    "sorrow, prefer realization, confusion, disappointment, nervousness, or neutral—"
+    "not grief.\n"
+    "- Irony and understatement: score the ironic distance, not the literal topic.\n"
+    "- Prefer affective labels (joy, sadness, anger, fear, love, admiration, curiosity, "
+    "etc.) when a clear mood is present. Use neutral only when the text is truly flat "
+    "or informational.\n"
+    "Calibration sketches (do not copy; mirror the method):\n"
+    "1) Mother died; narrator feels nothing / finds it absurd → realization/confusion/"
+    "neutral over grief.\n"
+    "2) Breakup described with cold procedural detail → disappointment/neutral over "
+    "sadness.\n"
+    "3) Warm reunion with clear affection → love/joy (here event and tone align).\n"
 )
 EDISI_KARSIT = re.compile(
     r"\b(ama|fakat|ancak|lakin|oysa|but|yet|however|although|though)\b",
@@ -683,6 +725,15 @@ UI_EN = {
     "model_loading": "Loading emotion classifier…",
     "insight_title": "Semantic & Philosophical Insight",
     "insight_unavailable": "Philosophical insight is temporarily unavailable.",
+    "feedback_prompt": "Was this insight perceptive?",
+    "feedback_up": "Helpful",
+    "feedback_down": "Off",
+    "feedback_thanks": "Thanks — this will shape future readings.",
+    "feedback_saved": "Feedback saved.",
+    "feedback_local_only": (
+        "Feedback is saving locally right now. Add SUPABASE_URL and "
+        "SUPABASE_KEY in secrets for durable multi-user storage."
+    ),
 }
 
 
@@ -898,11 +949,15 @@ def _gemini_generate_text(prompt: str) -> str:
     raise RuntimeError("Gemini insight çağrısı yapılandırılamadı.")
 
 
-def _gemini_insight_prompt(metin_ozet: str, output_lang: str) -> str:
+def _gemini_insight_prompt(
+    metin_ozet: str, output_lang: str, method_examples: str = ""
+) -> str:
     lang_name = gemini_output_language_name(output_lang)
+    ornek_blok = f"\n\n{method_examples}\n" if method_examples else "\n"
     return (
         f"{GEMINI_INSIGHT_PROMPT}\n"
-        f"Please provide the entire analysis and response strictly in {lang_name}.\n\n"
+        f"Please provide the entire analysis and response strictly in {lang_name}."
+        f"{ornek_blok}"
         f"Text:\n{metin_ozet}"
     )
 
@@ -925,25 +980,71 @@ def _gemini_with_length_fallback(
         return _gemini_generate_text(prompt_builder(kisa, output_lang))
 
 
+def _literary_match_bridge(metin: str) -> str:
+    """English text used only for literary-ref matching across languages."""
+    temiz = metin.strip()
+    if not temiz:
+        return ""
+    try:
+        source_lang = detect_source_lang(temiz)
+    except Exception:
+        source_lang = "en"
+    if (source_lang or "en").lower().startswith("en"):
+        return temiz
+    try:
+        return metni_ingilizceye_cevir(temiz, source_lang) or temiz
+    except Exception:
+        return temiz
+
+
+def _method_examples_bundle(metin: str) -> str:
+    """Curated refs + user feedback exemplars for Gemini method guidance."""
+    match_text = _literary_match_bridge(metin)
+    # Prefer one fewer static ref when approved feedback exists (prompt budget).
+    up_var = feedback_memory.retrieve_feedback(
+        metin, vote="up", k=1, match_text=match_text
+    )
+    ref_k = 1 if up_var else literary_memory.MAX_EXAMPLES
+    curated = literary_memory.method_examples_for(
+        metin, k=ref_k, match_text=match_text
+    )
+    learned = feedback_memory.format_feedback_for_prompt(
+        metin, match_text=match_text
+    )
+    return "\n\n".join(part for part in (curated, learned) if part)
+
+
 def gemini_philosophical_insight(metin: str, output_lang: str) -> str:
     temiz = metin.strip()
     if not temiz:
         return ""
-    return _gemini_with_length_fallback(
-        temiz, output_lang, _gemini_insight_prompt
-    )
+    method_examples = _method_examples_bundle(temiz)
+
+    def _builder(ozet: str, lang: str) -> str:
+        return _gemini_insight_prompt(ozet, lang, method_examples)
+
+    return _gemini_with_length_fallback(temiz, output_lang, _builder)
 
 
 def _metin_derin_analiz_uygun(metin: str) -> bool:
     """Skip Gemini insight / literary path on thin or phatic inputs."""
     temiz = metin.strip()
-    if not temiz:
+    if not temiz or _phatic_metin(temiz):
         return False
-    if len(temiz) < MIN_CHARS_DEEP:
-        return False
-    if len(temiz.split()) < MIN_WORDS_DEEP:
-        return False
-    return True
+    kelime = len(temiz.split())
+    if len(temiz) >= MIN_CHARS_DEEP and kelime >= MIN_WORDS_DEEP:
+        return True
+    # Compact literary numbness / withheld-feeling signals still deserve Gemini.
+    if (
+        len(temiz) >= 55
+        and kelime >= 8
+        and (
+            EDISI_DUYGU_INKAR.search(temiz)
+            or EDISI_BEKLENEN_DUYGU.search(temiz)
+        )
+    ):
+        return True
+    return False
 
 
 def _katmanli_edebi_metin(metin: str) -> bool:
@@ -1000,22 +1101,19 @@ def _parse_gemini_analysis_json(ham: str) -> tuple[list[dict], str]:
     return duygular[:3], insight
 
 
-def _gemini_birlesik_prompt(metin_ozet: str, output_lang: str) -> str:
+def _gemini_birlesik_prompt(
+    metin_ozet: str, output_lang: str, method_examples: str = ""
+) -> str:
     lang_name = gemini_output_language_name(output_lang)
     etiketler = ", ".join(sorted(EMOTION_LABELS_EN.keys()))
+    ornek_blok = f"\n{method_examples}\n\n" if method_examples else "\n"
     return (
         "Analyze the following text in its original language—including "
         "everyday prose, literature, poetry, irony, and philosophical writing.\n\n"
         f"{GEMINI_INSIGHT_PROMPT}\n"
         f"Write the insight field strictly in {lang_name}.\n\n"
-        "For emotions, score the speaker's or narrator's lived tone and "
-        "subtext—not plot keywords alone. Prefer affective labels "
-        "(joy, sadness, anger, fear, love, admiration, curiosity, etc.) "
-        "when any clear mood is present. Use neutral only when the text is "
-        "truly flat or informational. When the speaker reports numbness, "
-        "estrangement, or not feeling expected grief, prefer realization, "
-        "confusion, disappointment, or neutral over grief driven only by "
-        "events.\n\n"
+        f"{GEMINI_EMOTION_CALIBRATION}\n"
+        f"{ornek_blok}"
         "Return exactly three salient Go Emotions labels with confidence "
         f"scores between 0 and 1 (independent). Allowed labels: {etiketler}\n\n"
         "Respond with ONLY valid JSON (no markdown):\n"
@@ -1026,6 +1124,47 @@ def _gemini_birlesik_prompt(metin_ozet: str, output_lang: str) -> str:
     )
 
 
+def _anlatici_ton_mu(metin: str) -> bool:
+    """True when the voice signals numbness / withheld expected feeling."""
+    temiz = (metin or "").strip()
+    if not temiz:
+        return False
+    if EDISI_DUYGU_INKAR.search(temiz) or EDISI_BEKLENEN_DUYGU.search(temiz):
+        return True
+    # Event of loss + cool distancing words often implies tone ≠ grief.
+    if EDISI_OLAY_YASI.search(temiz) and re.search(
+        r"\b(stranger|alien|foreign|absurd|mechanical|ordinary|nothing|"
+        r"yabancı|yabanci|saçma|mekanik|sıradan|siradan|rien|absurde)\b",
+        temiz,
+        re.IGNORECASE,
+    ):
+        return True
+    return False
+
+
+def _duygu_olay_yanliligi_duzelt(
+    skorlar: list[dict], metin: str
+) -> list[dict]:
+    """If loss is topical but voice is numb, demote griefish labels."""
+    if not skorlar or not _anlatici_ton_mu(metin):
+        return skorlar
+    if not any(
+        s["label"].strip().lower() in GRIEFISH_LABELS for s in skorlar
+    ):
+        return skorlar
+    ayarlanmis: list[dict] = []
+    for kayit in skorlar:
+        etiket = kayit["label"].strip().lower()
+        skor = float(kayit["score"])
+        if etiket in GRIEFISH_LABELS:
+            skor *= 0.45
+        elif etiket in TON_LABELS:
+            skor = min(1.0, skor * 1.12 + 0.04)
+        ayarlanmis.append({"label": kayit["label"], "score": skor})
+    ayarlanmis.sort(key=lambda x: x["score"], reverse=True)
+    return ayarlanmis
+
+
 def gemini_birlesik_analiz(
     metin: str, output_lang: str
 ) -> tuple[list[dict], str]:
@@ -1033,10 +1172,16 @@ def gemini_birlesik_analiz(
     temiz = metin.strip()
     if not temiz:
         return [], ""
-    ham = _gemini_with_length_fallback(
-        temiz, output_lang, _gemini_birlesik_prompt
-    )
+    # Matching may use an English bridge; Gemini still reads the original text.
+    # Approved/rejected user feedback is mixed into method guidance over time.
+    method_examples = _method_examples_bundle(temiz)
+
+    def _builder(ozet: str, lang: str) -> str:
+        return _gemini_birlesik_prompt(ozet, lang, method_examples)
+
+    ham = _gemini_with_length_fallback(temiz, output_lang, _builder)
     duygular, insight = _parse_gemini_analysis_json(ham)
+    # Event≠tone correction runs inside ust_uc_duzenle.
     return ust_uc_duzenle(duygular, temiz), insight
 
 
@@ -1136,6 +1281,8 @@ def _top3_notr_sonra(not_notr: list[dict], sirali: list[dict]) -> list[dict]:
 
 def ust_uc_duzenle(skorlar: list[dict], metin: str = "") -> list[dict]:
     """Pick top-3; soften neutral dominance except true phatic greetings."""
+    if metin:
+        skorlar = _duygu_olay_yanliligi_duzelt(skorlar, metin)
     sirali = sorted(skorlar, key=lambda x: x["score"], reverse=True)
     if not sirali:
         return []
@@ -1496,32 +1643,6 @@ st.markdown(
             line-height: 1.6;
         }
 
-        .stage-shell {
-            margin: 1.35rem 0 0.35rem 0;
-            padding: 1.1rem 1.15rem 0.45rem 1.15rem;
-            border: 1px solid var(--line);
-            border-radius: 8px;
-            background: rgba(18, 22, 28, 0.72);
-            box-shadow: none;
-        }
-
-        .stage-top {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 1rem;
-            margin-bottom: 0.85rem;
-        }
-
-        .stage-label {
-            font-family: var(--sans);
-            font-size: 0.68rem;
-            letter-spacing: 0.16em;
-            text-transform: uppercase;
-            color: var(--quiet);
-            margin: 0;
-        }
-
         .char-meter {
             display: flex;
             justify-content: space-between;
@@ -1692,6 +1813,25 @@ st.markdown(
 
         .insight-body p:last-child {
             margin-bottom: 0;
+        }
+
+        .feedback-row {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem 1rem;
+            margin: 0.85rem 0 0.2rem 0;
+            padding: 0.85rem 0 0.15rem 0;
+            border-top: 1px solid #2c3440;
+        }
+
+        .feedback-prompt {
+            font-family: var(--sans);
+            font-size: 0.78rem;
+            letter-spacing: 0.06em;
+            color: var(--quiet);
+            margin: 0;
         }
 
         .result-panel {
@@ -1939,17 +2079,6 @@ with info_col:
     ):
         methodology_dialog()
 
-st.markdown(
-    f"""
-    <div class="stage-shell">
-      <div class="stage-top">
-        <p class="stage-label">Analysis stage</p>
-      </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
 metin = st.text_area(
     UI_EN["text_to_analyze"],
     height=320,
@@ -2001,17 +2130,16 @@ st.markdown(
 if analiz_et:
     if not metin.strip():
         st.warning(UI_EN["warning_empty"])
+        st.session_state.pop("last_analysis", None)
     else:
         try:
             insight_metni = ""
             temiz_metin = metin.strip()
             derin_analiz = _metin_derin_analiz_uygun(temiz_metin)
             gemini_anahtar = "GEMINI_API_KEY" in st.secrets
-            # Main-thread pipeline: RoBERTa first (backup), then one Gemini pass.
-            with st.spinner(""):
-                _, ust_uc, baskın, _ = _analyze_emotions(
-                    temiz_metin, results_lang
-                )
+            ust_uc: list[dict] = []
+            baskın = ""
+            # Deep path: Gemini is primary for emotions+insight; RoBERTa is fallback.
             if gemini_anahtar and derin_analiz:
                 with st.spinner(""):
                     try:
@@ -2032,30 +2160,111 @@ if analiz_et:
                             else:
                                 st.error(metin_mesaj)
                         insight_metni = ""
+                if not ust_uc:
+                    with st.spinner(""):
+                        _, ust_uc, baskın, _ = _analyze_emotions(
+                            temiz_metin, results_lang
+                        )
             else:
-                insight_metni = ""
-
-            tablo = duygu_tablosu_html(ust_uc, results_lang)
-
-            if not derin_analiz:
-                st.info(
-                    UI_EN["warning_too_short"].format(min_chars=MIN_CHARS_DEEP)
-                )
-            elif insight_metni:
-                st.markdown(
-                    insight_paneli_html(insight_metni),
-                    unsafe_allow_html=True,
-                )
+                with st.spinner(""):
+                    _, ust_uc, baskın, _ = _analyze_emotions(
+                        temiz_metin, results_lang
+                    )
 
             soz, soz_kaynak = rastgele_analiz_sozu()
-            st.markdown(
-                sonuc_paneli_html(baskın, tablo, soz, soz_kaynak),
-                unsafe_allow_html=True,
-            )
-
+            st.session_state["last_analysis"] = {
+                "text": temiz_metin,
+                "insight": insight_metni,
+                "ust_uc": ust_uc,
+                "baskin": baskın,
+                "results_lang": results_lang,
+                "deep": derin_analiz,
+                "quote": soz,
+                "quote_attr": soz_kaynak,
+                "feedback_vote": None,
+            }
             st.components.v1.html(
                 "<script>window.parent.scrollTo({top: window.parent.document.body.scrollHeight, behavior: 'smooth'});</script>",
                 height=0,
             )
         except Exception as exc:
+            st.session_state.pop("last_analysis", None)
             st.error(f'{UI_EN["error_prefix"]} {exc}')
+
+sonuc = st.session_state.get("last_analysis")
+if sonuc:
+    ust_uc = sonuc.get("ust_uc") or []
+    baskın = sonuc.get("baskin") or ""
+    insight_metni = sonuc.get("insight") or ""
+    results_lang_sonuc = sonuc.get("results_lang") or results_lang
+    tablo = duygu_tablosu_html(ust_uc, results_lang_sonuc) if ust_uc else ""
+
+    if not sonuc.get("deep"):
+        st.info(UI_EN["warning_too_short"].format(min_chars=MIN_CHARS_DEEP))
+    elif insight_metni:
+        st.markdown(
+            insight_paneli_html(insight_metni),
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            f'<div class="feedback-row">'
+            f'<p class="feedback-prompt">{UI_EN["feedback_prompt"]}</p>'
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+        onceki_oy = sonuc.get("feedback_vote")
+        if onceki_oy:
+            st.caption(UI_EN["feedback_thanks"])
+        else:
+            if feedback_memory.storage_mode() != "supabase":
+                st.caption(UI_EN["feedback_local_only"])
+            up_col, down_col, _ = st.columns([1, 1, 4])
+            with up_col:
+                if st.button(
+                    UI_EN["feedback_up"],
+                    key="feedback_up_btn",
+                    use_container_width=True,
+                ):
+                    try:
+                        feedback_memory.save_feedback(
+                            vote="up",
+                            text=sonuc.get("text") or "",
+                            insight=insight_metni,
+                            emotions=ust_uc,
+                            results_lang=results_lang_sonuc,
+                        )
+                        st.session_state["last_analysis"]["feedback_vote"] = "up"
+                        st.success(UI_EN["feedback_saved"])
+                        st.rerun()
+                    except Exception as fb_exc:
+                        st.warning(f"Feedback could not be saved: {fb_exc}")
+            with down_col:
+                if st.button(
+                    UI_EN["feedback_down"],
+                    key="feedback_down_btn",
+                    use_container_width=True,
+                ):
+                    try:
+                        feedback_memory.save_feedback(
+                            vote="down",
+                            text=sonuc.get("text") or "",
+                            insight=insight_metni,
+                            emotions=ust_uc,
+                            results_lang=results_lang_sonuc,
+                        )
+                        st.session_state["last_analysis"]["feedback_vote"] = "down"
+                        st.success(UI_EN["feedback_saved"])
+                        st.rerun()
+                    except Exception as fb_exc:
+                        st.warning(f"Feedback could not be saved: {fb_exc}")
+
+    if ust_uc and tablo:
+        st.markdown(
+            sonuc_paneli_html(
+                baskın,
+                tablo,
+                sonuc.get("quote") or SITE_MOTTO[0],
+                sonuc.get("quote_attr") or SITE_MOTTO[1],
+            ),
+            unsafe_allow_html=True,
+        )
